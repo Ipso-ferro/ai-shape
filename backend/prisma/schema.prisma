@@ -1,0 +1,294 @@
+// This is your Prisma schema file
+// https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum SubscriptionTier {
+  FREE
+  PRO
+}
+
+enum MealType {
+  BREAKFAST
+  LUNCH
+  DINNER
+  SNACK
+}
+
+enum WorkoutIntensity {
+  NONE
+  LOW
+  MEDIUM
+  HIGH
+  VERY_HIGH
+}
+
+enum SyncStatus {
+  PENDING
+  SYNCED
+  REJECTED
+}
+
+enum SharedPlan {
+  MEAL
+  WORKOUT
+  BOTH
+}
+
+enum ShoppingCategory {
+  PROTEIN
+  CARBS
+  FATS
+  VEGGIES
+  DAIRY
+  OTHER
+}
+
+enum ActivityLevel {
+  SEDENTARY
+  LIGHTLY_ACTIVE
+  MODERATELY_ACTIVE
+  VERY_ACTIVE
+  ATHLETE
+}
+
+enum WorkoutLocation {
+  GYM
+  HOME
+  CALISTHENICS
+}
+
+enum MacroVelocity {
+  SLOW
+  AI_RECOMMENDED
+  FAST
+}
+
+enum Gender {
+  MALE
+  FEMALE
+}
+
+enum Weekday {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+// ─── Models ──────────────────────────────────────────────────────────────────
+
+model User {
+  id               String           @id @default(uuid())
+  email            String           @unique
+  passwordHash     String
+  subscriptionTier SubscriptionTier @default(FREE)
+  isPro            Boolean          @default(false)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  profile       UserProfile?
+  subscription  Subscription?
+  biometrics    BiometricEntry[]
+  mealPlans     DailyMealPlan[]
+  weeklyMealPlans WeeklyMealPlan[]
+  workouts      WorkoutRoutine[]
+  shoppingItems ShoppingItem[]
+  inviteCodes   InviteCode[]        @relation("CoachInvites")
+  redeemedCode  InviteCode?         @relation("RedeemedInvite")
+  connections   UserConnection[]    @relation("UserConnections")
+  connectedBy   UserConnection[]    @relation("ConnectedUsers")
+
+  @@map("users")
+}
+
+model UserProfile {
+  id             String          @id @default(uuid())
+  userId         String          @unique
+  gender         Gender
+  ageYrs         Int
+  heightCm       Float
+  weightKg       Float
+  targetWeightKg Float
+  goals          Json            // String[]
+  workoutLocations Json          // WorkoutLocation[]
+  diets          Json            // String[]
+  allergies      Json            // String[]
+  activityLevel  ActivityLevel
+  macroVelocity  MacroVelocity   @default(AI_RECOMMENDED)
+  // Macro targets (computed or overridden)
+  dailyCalories  Int             @default(0)
+  mealsPerDay    Int             @default(3)
+  proteinG       Int             @default(0)
+  carbsG         Int             @default(0)
+  fatG           Int             @default(0)
+  updatedAt      DateTime        @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_profiles")
+}
+
+model Subscription {
+  id                   String           @id @default(uuid())
+  userId               String           @unique
+  tier                 SubscriptionTier @default(FREE)
+  billingCycle         String           // 'MONTHLY' | 'ANNUAL'
+  stripeCustomerId     String           @default("")
+  stripeSubscriptionId String           @default("")
+  startedAt            DateTime         @default(now())
+  endsAt               DateTime?
+  cancelledAt          DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+}
+
+model WorkoutRoutine {
+  id          String          @id @default(uuid())
+  userId      String
+  weekday     Weekday
+  name        String
+  durationMin Int             @default(45)
+  intensity   WorkoutIntensity @default(MEDIUM)
+  exercises   ExerciseItem[]
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("workout_routines")
+}
+
+model ExerciseItem {
+  id        String  @id @default(uuid())
+  routineId String
+  name      String
+  sets      String
+  notes     String  @db.Text
+  completed Boolean @default(false)
+  orderIdx  Int     @default(0)
+
+  routine WorkoutRoutine @relation(fields: [routineId], references: [id], onDelete: Cascade)
+
+  @@map("exercise_items")
+}
+
+model DailyMealPlan {
+  id            String   @id @default(uuid())
+  userId        String
+  date          DateTime @db.Date
+  totalCalories Int      @default(0)
+  totalProteinG Float    @default(0)
+  totalCarbsG   Float    @default(0)
+  totalFatG     Float    @default(0)
+  meals         Meal[]
+  createdAt     DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
+  @@map("daily_meal_plans")
+}
+
+model WeeklyMealPlan {
+  id                String   @id @default(uuid())
+  userId            String
+  createdAt         DateTime @default(now())
+  weeklyMeals       Json     // structured array of 7 days
+  weeklyIngredients Json     // structured array of compiled ingredients
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("weekly_meal_plans")
+}
+
+model Meal {
+  id            String   @id @default(uuid())
+  planId        String
+  type          MealType
+  name          String
+  scheduledHour Int      @default(8)
+  calories      Int
+  proteinG      Float
+  carbsG        Float
+  fatG          Float
+  ingredients   Json     // String[]
+  instructions  Json     // String[]
+  eaten         Boolean  @default(false)
+
+  plan DailyMealPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@map("meals")
+}
+
+model BiometricEntry {
+  id          String   @id @default(uuid())
+  userId      String
+  recordedAt  DateTime @default(now())
+  weightKg    Float
+  bodyFatPct  Float?
+  waistCm     Float?
+  chestCm     Float?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("biometric_entries")
+}
+
+model ShoppingItem {
+  id       String           @id @default(uuid())
+  userId   String
+  planDate DateTime?        @db.Date
+  name     String
+  qty      String
+  category ShoppingCategory @default(OTHER)
+  checked  Boolean          @default(false)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("shopping_items")
+}
+
+model InviteCode {
+  id           String    @id @default(uuid())
+  coachId      String
+  code         String    @unique
+  usedByUserId String?   @unique
+  usedAt       DateTime?
+  expiresAt    DateTime
+
+  coach      User  @relation("CoachInvites", fields: [coachId], references: [id], onDelete: Cascade)
+  usedByUser User? @relation("RedeemedInvite", fields: [usedByUserId], references: [id])
+
+  @@map("invite_codes")
+}
+
+model UserConnection {
+  id              String     @id @default(uuid())
+  userId          String
+  connectedUserId String
+  status          SyncStatus @default(PENDING)
+  sharedPlan      SharedPlan @default(BOTH)
+  streakDays      Int        @default(0)
+  createdAt       DateTime   @default(now())
+
+  user          User @relation("UserConnections", fields: [userId], references: [id], onDelete: Cascade)
+  connectedUser User @relation("ConnectedUsers", fields: [connectedUserId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, connectedUserId])
+  @@map("user_connections")
+}
