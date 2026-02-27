@@ -14,7 +14,6 @@ const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"
 
 export default function WorkoutPlan() {
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
-  const [completedExercises, setCompletedExercises] = useState<Record<string, boolean>>({});
   const [videoModalOpen, setVideoModalOpen] = useState(false);
   const [currentVideoExc, setCurrentVideoExc] = useState("");
   const location = useLocation();
@@ -43,7 +42,11 @@ export default function WorkoutPlan() {
             duration: `${d.durationMin} min`,
             intensity: d.intensity,
             exercises: d.exercises.map((e: any) => ({
-              name: e.name, sets: e.sets, notes: e.notes
+              id: e.id,
+              name: e.name,
+              sets: e.sets,
+              notes: e.notes,
+              completed: Boolean(e.completed)
             }))
           };
         }
@@ -76,8 +79,19 @@ export default function WorkoutPlan() {
     }
   };
 
-  const toggleExercise = (ex: string) => {
-    setCompletedExercises((prev) => ({ ...prev, [ex]: !prev[ex] }));
+  const toggleExercise = async (exerciseLogId: number, currentStatus: boolean) => {
+    try {
+      await api.put(`/api/v1/ai/exercises/${exerciseLogId}/completed`, {
+        completed: !currentStatus
+      });
+      await fetchWorkoutPlan();
+    } catch (err: any) {
+      toast({
+        title: "Update Failed",
+        description: err.message || "Could not update exercise status.",
+        variant: "destructive",
+      });
+    }
   };
 
   const scheduleInCalendar = () => {
@@ -124,11 +138,11 @@ export default function WorkoutPlan() {
                 <div className="md:col-span-2 space-y-4">
                   <h3 className="text-xl font-display font-bold border-b border-border/50 pb-2 mb-4">Training Block</h3>
                   {w.exercises.map((ex, i) => {
-                    const isDone = completedExercises[ex.name];
+                    const isDone = Boolean(ex.completed);
                     return (
                       <div key={i} className={`glass-card p-5 flex flex-col sm:flex-row sm:items-center gap-4 transition-all ${isDone ? 'opacity-60 bg-secondary/10 border-primary/20' : 'hover:border-primary/50'}`}>
                         <button
-                          onClick={() => toggleExercise(ex.name)}
+                          onClick={() => void toggleExercise(ex.id, isDone)}
                           className={`h-8 w-8 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${isDone ? 'bg-primary border-primary text-primary-foreground' : 'border-muted-foreground hover:border-primary'}`}
                         >
                           {isDone && <CheckCircle2 className="h-5 w-5" />}
@@ -157,6 +171,7 @@ export default function WorkoutPlan() {
                     <div className="relative z-10">
                       <AIChatWidget
                         context="workout"
+                        onPlanUpdated={() => { void fetchWorkoutPlan(); }}
                         suggestions={[
                           "Alternative for " + w.exercises[0]?.name + "?",
                           "My shoulders hurt, modifications?",

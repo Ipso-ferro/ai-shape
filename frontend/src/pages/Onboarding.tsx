@@ -71,7 +71,7 @@ export default function Onboarding() {
     const { email, password } = JSON.parse(pending);
     setIsSubmitting(true); setSubmitError("");
     try {
-      await api.post("/api/v1/auth/register", {
+      const data = await api.post<{ user: { id: string; email: string; isPro: boolean; subscriptionTier?: string } }>("/api/v1/auth/register", {
         email, password,
         gender: gender === "Male" ? "MALE" : "FEMALE",
         ageYrs: parseInt(age), heightCm: parseFloat(height),
@@ -83,7 +83,7 @@ export default function Onboarding() {
         mealsPerDay: parseInt(mealsPerDay),
       });
       sessionStorage.removeItem("pending_register");
-      setUserDirectly(email, false);
+      setUserDirectly(data.user);
       navigate("/dashboard");
     } catch (err: unknown) {
       setSubmitError((err as Error).message || "Registration failed. Please try again.");

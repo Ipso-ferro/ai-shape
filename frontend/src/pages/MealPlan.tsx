@@ -358,6 +358,7 @@ export default function MealPlan() {
                   <div className="relative z-10">
                     <AIChatWidget
                       context="meal"
+                      onPlanUpdated={() => { void fetchMealPlan(); }}
                       suggestions={[
                         "Make breakfast vegan",
                         "I don't have asparagus",

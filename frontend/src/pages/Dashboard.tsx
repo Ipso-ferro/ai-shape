@@ -18,11 +18,6 @@ const macros = [
   { label: "Fat", value: 68, target: 80, unit: "g", icon: Target, color: "text-yellow-400" },
 ];
 
-const quickActions = [
-  { title: "Today's Meals", desc: "View meals", icon: Utensils, url: "/meal-plan" },
-  { title: "Today's Workout", desc: "View workout", icon: Dumbbell, url: "/workout-plan" },
-];
-
 export default function Dashboard() {
   const { user } = useAuth();
   const isPro = user?.isPro || false;
@@ -57,6 +52,8 @@ export default function Dashboard() {
   const consumedProtein = todayPlan?.meals?.filter((m: any) => m.eaten).reduce((sum: number, m: any) => sum + m.proteinG, 0) || 0;
   const consumedCarbs = todayPlan?.meals?.filter((m: any) => m.eaten).reduce((sum: number, m: any) => sum + m.carbsG, 0) || 0;
   const consumedFat = todayPlan?.meals?.filter((m: any) => m.eaten).reduce((sum: number, m: any) => sum + m.fatG, 0) || 0;
+  const completedExercises = todayPlan?.exercises?.filter((e: any) => e.completed).length || 0;
+  const totalExercises = todayPlan?.exercises?.length || 0;
 
   const displayMacros = [
     { label: "Calories", value: consumedCalories, target: targetCalories, icon: Flame, color: "text-orange-400" },
@@ -66,6 +63,10 @@ export default function Dashboard() {
   ];
 
   const todayMealCount = todayPlan?.meals?.length || 0;
+  const quickActions = [
+    { title: "Today's Meals", desc: `${todayMealCount} planned`, icon: Utensils, url: "/meal-plan" },
+    { title: "Today's Workout", desc: `${completedExercises}/${totalExercises} completed`, icon: Dumbbell, url: "/workout-plan" },
+  ];
 
   return (
     <AppLayout>
@@ -165,6 +166,9 @@ export default function Dashboard() {
               <div className="relative z-10">
                 <AIChatWidget
                   context="dashboard"
+                  onPlanUpdated={() => {
+                    api.get<any>("/api/v1/ai/today").then((data) => setTodayPlan(data)).catch(() => {});
+                  }}
                   suggestions={[
                     "Analyze my weekly trend",
                     "How can I improve my macros today?",

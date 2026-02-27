@@ -1,4 +1,4 @@
-const BASE_URL = '';
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const res = await fetch(`${BASE_URL}${path}`, {
@@ -7,17 +7,18 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
         ...options,
     });
 
-    const json = await res.json();
+    const contentType = res.headers.get('content-type') || '';
+    const json = contentType.includes('application/json') ? await res.json() : null;
 
     if (!res.ok) {
-        if (json.errors && Array.isArray(json.errors) && json.errors.length > 0) {
+        if (json?.errors && Array.isArray(json.errors) && json.errors.length > 0) {
             const details = json.errors.map((e: { field: string; message: string }) => `${e.field}: ${e.message}`).join(' | ');
             throw new Error(`${json.message} — ${details}`);
         }
-        throw new Error(json.message || 'Request failed');
+        throw new Error(json?.message || 'Request failed');
     }
 
-    return json.data as T;
+    return (json?.data ?? null) as T;
 }
 
 export const api = {
