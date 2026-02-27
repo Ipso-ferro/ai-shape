@@ -1,44 +1,14 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "react-router-dom";
 import { AppLayout } from "@/components/AppLayout";
-import { Calendar, PlayCircle, CheckCircle2, ChevronLeft, ArrowUpRight, Flame, Video, Lock, Sparkles } from "lucide-react";
+import { Calendar, PlayCircle, CheckCircle2, ChevronLeft, ArrowUpRight, Flame, Video, Lock, Sparkles, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AIChatWidget } from "@/components/AIChatWidget";
 import { useAuth } from "@/contexts/AuthContext";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Link } from "react-router-dom";
-
-const scheduleData = {
-  Monday: {
-    name: "Push Day (Chest/Shoulders/Triceps)",
-    duration: "45-60 min",
-    intensity: "High",
-    exercises: [
-      { name: "Barbell Bench Press", sets: "4x8-10", notes: "Bar path over mid-chest" },
-      { name: "Incline Dumbbell Press", sets: "3x10-12", notes: "30-45 degree incline" },
-      { name: "Overhead Press", sets: "4x8", notes: "Core tight, no arching" },
-      { name: "Lateral Raises", sets: "3x15", notes: "Slight forward lean" },
-      { name: "Triceps Pushdowns", sets: "3x12", notes: "Focus on the squeeze" },
-    ],
-  },
-  Tuesday: {
-    name: "Pull Day (Back/Biceps)",
-    duration: "45-60 min",
-    intensity: "High",
-    exercises: [
-      { name: "Barbell Rows", sets: "4x8", notes: "Pull to lower stomach" },
-      { name: "Lat Pulldowns", sets: "3x10-12", notes: "Control the eccentric" },
-      { name: "Face Pulls", sets: "3x15", notes: "Pull to forehead, squeeze rear delts" },
-      { name: "Barbell Curls", sets: "3x10", notes: "No swinging" },
-      { name: "Hammer Curls", sets: "3x12", notes: "Control the weight" },
-    ]
-  },
-  Wednesday: { name: "Active Recovery", duration: "30 min", intensity: "Low", exercises: [] },
-  Thursday: { name: "Leg Day (Quads/Calves)", duration: "60-75 min", intensity: "Very High", exercises: [] },
-  Friday: { name: "Upper Body Focus", duration: "45-60 min", intensity: "High", exercises: [] },
-  Saturday: { name: "Leg Day (Hamstrings/Glutes)", duration: "60 min", intensity: "High", exercises: [] },
-  Sunday: { name: "Full Rest", duration: "-", intensity: "None", exercises: [] },
-};
+import { api } from "@/lib/api";
+import { useToast } from "@/components/ui/use-toast";
 
 const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
@@ -51,11 +21,60 @@ export default function WorkoutPlan() {
 
   const { user } = useAuth();
   const isPro = user?.isPro || false;
+  const { toast } = useToast();
+
+  const [scheduleData, setScheduleData] = useState<any>(null);
+  const [isLoadingPlan, setIsLoadingPlan] = useState(true);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   // Reset to weekly view whenever navigating to this page
   useEffect(() => {
     setSelectedDay(null);
   }, [location.pathname]);
+
+  const fetchWorkoutPlan = async () => {
+    try {
+      const data = await api.get<any[]>('/api/v1/ai/workout-plan');
+      if (data && data.length > 0) {
+        const formatted: Record<string, any> = {};
+        for (const d of data) {
+          formatted[d.weekday] = {
+            name: d.name,
+            duration: `${d.durationMin} min`,
+            intensity: d.intensity,
+            exercises: d.exercises.map((e: any) => ({
+              name: e.name, sets: e.sets, notes: e.notes
+            }))
+          };
+        }
+        setScheduleData(formatted);
+      } else {
+        setScheduleData(null);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoadingPlan(false);
+    }
+  };
+
+  useEffect(() => {
+    if (user) fetchWorkoutPlan();
+  }, [user]);
+
+  const handleGeneratePlan = async () => {
+    if (!isPro) return;
+    setIsGenerating(true);
+    try {
+      await api.post('/api/v1/ai/generate-workout-plan', {});
+      toast({ title: "Plan Generated", description: "Your workout matrix has been created." });
+      await fetchWorkoutPlan();
+    } catch (err: any) {
+      toast({ title: "Generation Failed", description: err.message, variant: "destructive" });
+    } finally {
+      setIsGenerating(false);
+    }
+  };
 
   const toggleExercise = (ex: string) => {
     setCompletedExercises((prev) => ({ ...prev, [ex]: !prev[ex] }));
@@ -216,73 +235,106 @@ export default function WorkoutPlan() {
   return (
     <AppLayout>
       <div className="space-y-12 pt-12 md:pt-0 max-w-6xl mx-auto overflow-hidden">
-        <div className="relative">
-          <div className={`space-y-12 transition-all duration-300 ${!isPro ? "blur-md pointer-events-none opacity-50" : ""}`}>
-            <div className="text-center max-w-3xl mx-auto space-y-4">
-              <h1 className="text-5xl font-display font-black tracking-tighter uppercase relative inline-block">
-                Training <span className="text-primary">Routine</span>
-              </h1>
-              <p className="text-lg text-muted-foreground">Select a module to view the workout matrix, log sets, and analyze biomechanics.</p>
+        {!scheduleData && !isLoadingPlan ? (
+          <div className="glass-card p-12 text-center mt-8 border-dashed border-2 border-border/50 bg-secondary/5 flex flex-col items-center justify-center min-h-[400px]">
+            <div className="h-20 w-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-6">
+              <Activity className="h-10 w-10 text-primary" />
             </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 auto-rows-[minmax(180px,auto)] justify-center">
-              {days.map((day) => {
-                const w = scheduleData[day as keyof typeof scheduleData];
-                const isRest = w.name.includes("Rest") || w.name.includes("Recovery");
-                return (
-                  <div
-                    key={day}
-                    onClick={() => setSelectedDay(day)}
-                    className={`glass-card p-6 cursor-pointer group flex flex-col justify-between transition-all duration-300 transform hover:-translate-y-1 ${isRest
-                      ? "opacity-60 hover:opacity-100 border-dashed border-border/50 bg-secondary/10"
-                      : "hover:border-primary/50 hover:shadow-glow bg-card/40"
-                      }`}
-                  >
-                    <div>
-                      <div className="flex items-center justify-between mb-4">
-                        <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground group-hover:text-primary transition-colors">{day}</span>
-                        <ArrowUpRight className="h-4 w-4 text-muted-foreground/50 group-hover:text-primary transition-colors" />
-                      </div>
-                      <h3 className="font-display font-bold text-xl leading-tight text-foreground">{w.name}</h3>
-                    </div>
-
-                    <div className="flex items-center gap-4 mt-6 pt-4 border-t border-border/30">
-                      <div className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground">
-                        <Calendar className="h-3.5 w-3.5" />
-                        {w.duration}
-                      </div>
-                      {!isRest && (
-                        <div className="flex items-center gap-1.5 text-xs font-mono text-primary">
-                          <Flame className="h-3.5 w-3.5" />
-                          {w.intensity}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            <h3 className="text-3xl font-display font-bold mb-4">No Workout Matrix Active</h3>
+            <p className="text-muted-foreground max-w-md mx-auto mb-8">
+              Your personal trainer is standing by. Generate a highly optimized weekly training regimen designed specifically for your goals and biometrics.
+            </p>
+            {isPro ? (
+              <Button onClick={handleGeneratePlan} disabled={isGenerating} size="lg" className="shadow-glow h-14 px-8 text-lg font-bold">
+                <Sparkles className={`h-5 w-5 mr-2 ${isGenerating ? 'animate-spin' : 'text-yellow-400'}`} />
+                {isGenerating ? "Generating..." : "Generate AI Routine"}
+              </Button>
+            ) : (
+              <Link to="/billing">
+                <Button size="lg" className="shadow-glow h-14 px-8 text-lg font-bold">
+                  Upgrade to Pro <Lock className="h-4 w-4 ml-2" />
+                </Button>
+              </Link>
+            )}
           </div>
-
-          {!isPro && (
-            <div className="absolute inset-x-0 inset-y-0 z-20 flex flex-col items-center justify-center p-6 text-center">
-              <div className="glass-card w-full max-w-sm p-8 shadow-2xl border-primary/30 flex flex-col items-center bg-background/95 backdrop-blur-xl">
-                <div className="h-16 w-16 bg-primary/20 text-primary rounded-full flex items-center justify-center mb-6 ring-8 ring-primary/5">
-                  <Lock className="h-8 w-8" />
+        ) : (
+          <div className="relative">
+            <div className={`space-y-12 transition-all duration-300 ${!isPro ? "blur-md pointer-events-none opacity-50" : ""}`}>
+              <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 px-4 md:px-0">
+                <div className="space-y-4">
+                  <h1 className="text-5xl font-display font-black tracking-tighter uppercase relative inline-block">
+                    Training <span className="text-primary">Routine</span>
+                  </h1>
+                  <p className="text-lg text-muted-foreground">Select a module to view the workout matrix, log sets, and analyze biomechanics.</p>
                 </div>
-                <h3 className="font-display font-bold text-2xl mb-2">Pro Access Required</h3>
-                <p className="text-muted-foreground mb-8 text-sm leading-relaxed">
-                  The complete Routine and progressive overload matrices are reserved for Pro operators.
-                </p>
-                <Link to="/billing" className="w-full">
-                  <Button className="w-full font-bold shadow-glow text-md h-12">
-                    Upgrade to Pro <Sparkles className="h-4 w-4 ml-2" />
+                {isPro && scheduleData && (
+                  <Button onClick={handleGeneratePlan} disabled={isGenerating} className="shadow-glow hover:bg-primary/90 transition-all font-bold self-start md:self-auto mt-4 md:mt-0">
+                    <Sparkles className={`h-4 w-4 mr-2 ${isGenerating ? 'animate-spin' : 'text-yellow-400'}`} />
+                    {isGenerating ? "Generating..." : "Regenerate Plan"}
                   </Button>
-                </Link>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 auto-rows-[minmax(180px,auto)] justify-center">
+                {scheduleData && days.map((day) => {
+                  const w = scheduleData[day as keyof typeof scheduleData];
+                  if (!w) return null;
+                  const isRest = w.name.includes("Rest") || w.name.includes("Recovery");
+                  return (
+                    <div
+                      key={day}
+                      onClick={() => setSelectedDay(day)}
+                      className={`glass-card p-6 cursor-pointer group flex flex-col justify-between transition-all duration-300 transform hover:-translate-y-1 ${isRest
+                        ? "opacity-60 hover:opacity-100 border-dashed border-border/50 bg-secondary/10"
+                        : "hover:border-primary/50 hover:shadow-glow bg-card/40"
+                        }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-4">
+                          <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground group-hover:text-primary transition-colors">{day}</span>
+                          <ArrowUpRight className="h-4 w-4 text-muted-foreground/50 group-hover:text-primary transition-colors" />
+                        </div>
+                        <h3 className="font-display font-bold text-xl leading-tight text-foreground">{w.name}</h3>
+                      </div>
+
+                      <div className="flex items-center gap-4 mt-6 pt-4 border-t border-border/30">
+                        <div className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground">
+                          <Calendar className="h-3.5 w-3.5" />
+                          {w.duration}
+                        </div>
+                        {!isRest && (
+                          <div className="flex items-center gap-1.5 text-xs font-mono text-primary">
+                            <Flame className="h-3.5 w-3.5" />
+                            {w.intensity}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
-          )}
-        </div>
+
+            {!isPro && (
+              <div className="absolute inset-x-0 inset-y-0 z-20 flex flex-col items-center justify-center p-6 text-center">
+                <div className="glass-card w-full max-w-sm p-8 shadow-2xl border-primary/30 flex flex-col items-center bg-background/95 backdrop-blur-xl">
+                  <div className="h-16 w-16 bg-primary/20 text-primary rounded-full flex items-center justify-center mb-6 ring-8 ring-primary/5">
+                    <Lock className="h-8 w-8" />
+                  </div>
+                  <h3 className="font-display font-bold text-2xl mb-2">Pro Access Required</h3>
+                  <p className="text-muted-foreground mb-8 text-sm leading-relaxed">
+                    The complete Routine and progressive overload matrices are reserved for Pro operators.
+                  </p>
+                  <Link to="/billing" className="w-full">
+                    <Button className="w-full font-bold shadow-glow text-md h-12">
+                      Upgrade to Pro <Sparkles className="h-4 w-4 ml-2" />
+                    </Button>
+                  </Link>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </AppLayout>
   );

@@ -53,10 +53,10 @@ export default function Dashboard() {
   const targetCarbs = profileData?.macroTargets?.carbsG || 280;
   const targetFat = profileData?.macroTargets?.fatG || 80;
 
-  const consumedCalories = todayPlan?.totalCalories || 0;
-  const consumedProtein = todayPlan?.totalProteinG || 0;
-  const consumedCarbs = todayPlan?.totalCarbsG || 0;
-  const consumedFat = todayPlan?.totalFatG || 0;
+  const consumedCalories = todayPlan?.meals?.filter((m: any) => m.eaten).reduce((sum: number, m: any) => sum + m.calories, 0) || 0;
+  const consumedProtein = todayPlan?.meals?.filter((m: any) => m.eaten).reduce((sum: number, m: any) => sum + m.proteinG, 0) || 0;
+  const consumedCarbs = todayPlan?.meals?.filter((m: any) => m.eaten).reduce((sum: number, m: any) => sum + m.carbsG, 0) || 0;
+  const consumedFat = todayPlan?.meals?.filter((m: any) => m.eaten).reduce((sum: number, m: any) => sum + m.fatG, 0) || 0;
 
   const displayMacros = [
     { label: "Calories", value: consumedCalories, target: targetCalories, icon: Flame, color: "text-orange-400" },
