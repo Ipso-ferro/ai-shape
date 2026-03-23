@@ -2,6 +2,7 @@
 
 backend/.env
 backend/node_modules/
+backend/.npm-cache/
 backend/build/
 
 frontend/.env

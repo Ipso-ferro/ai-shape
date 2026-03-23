@@ -4,10 +4,33 @@ import {
   useRef,
   startTransition,
   useEffect,
+  useLayoutEffect,
   useState,
 } from "react";
+import {
+  Activity,
+  ArrowRight,
+  BarChartSquare02,
+  CalendarCheck02,
+  CheckCircle,
+  Package,
+  RefreshCcw02,
+  Settings02,
+  Shield01,
+  ShoppingBag02,
+  Target04,
+  Zap,
+} from "@untitledui/icons";
+import { gsap } from "gsap";
 import { api, ApiError } from "./api";
-import { dietTypeOptions, mealConfig, profileOptions, storageKey, viewLabels } from "./constants";
+import {
+  dietTypeOptions,
+  energyUnitOptions,
+  mealConfig,
+  profileOptions,
+  storageKey,
+  viewLabels,
+} from "./constants";
 import { formatNumber, getCurrentWeek, humanDate, todayKey } from "./date";
 import type {
   AuthAccount,
@@ -17,6 +40,7 @@ import type {
   DietPlanDay,
   DietPlanEntry,
   DietType,
+  EnergyUnit,
   MealSlot,
   ProfileDraft,
   ProgressDay,
@@ -30,6 +54,10 @@ import type {
   WorkoutPlan,
   WorkoutPlanDay,
 } from "./types";
+
+const mealsPerDayMin = 1;
+const mealsPerDayMax = 6;
+const kilojoulesPerCalorie = 4.184;
 
 const emptyDraft: ProfileDraft = {
   name: "",
@@ -49,8 +77,27 @@ const emptyDraft: ProfileDraft = {
   favoriteFoods: "",
   supplementation: "",
   numberOfMeals: "4",
+  energyUnitPreference: "kj",
   favorieteCoucineRecipes: "",
 };
+
+const clampMealsPerDay = (value: number): number => {
+  if (!Number.isFinite(value)) {
+    return mealsPerDayMin;
+  }
+
+  return Math.max(mealsPerDayMin, Math.min(mealsPerDayMax, Math.round(value)));
+};
+
+const toCalories = (kilojoules: number): number => Math.round(kilojoules / kilojoulesPerCalorie);
+
+const getEnergyUnitLabel = (energyUnit: EnergyUnit): string => (
+  energyUnit === "cal" ? "kcal" : "kJ"
+);
+
+const formatEnergyValue = (kilojoules: number, energyUnit: EnergyUnit): string => (
+  `${formatNumber(energyUnit === "cal" ? toCalories(kilojoules) : kilojoules)} ${getEnergyUnitLabel(energyUnit)}`
+);
 
 const splitList = (value: string): string[] => value
   .split(",")
@@ -94,6 +141,7 @@ const toDraft = (user: UserProfile | null): ProfileDraft => {
     favoriteFoods: user.favoriteFoods.join(", "),
     supplementation: user.supplementation.join(", "),
     numberOfMeals: String(user.numberOfMeals || 4),
+    energyUnitPreference: user.energyUnitPreference === "cal" ? "cal" : "kj",
     favorieteCoucineRecipes: user.favorieteCoucineRecipes.join(", "),
   };
 };
@@ -115,7 +163,8 @@ const buildSavePayload = (draft: ProfileDraft) => ({
   injuries: splitList(draft.injuries),
   favoriteFoods: splitList(draft.favoriteFoods),
   supplementation: splitList(draft.supplementation),
-  numberOfMeals: Number(draft.numberOfMeals),
+  numberOfMeals: clampMealsPerDay(Number(draft.numberOfMeals)),
+  energyUnitPreference: draft.energyUnitPreference,
   favorieteCoucineRecipes: splitList(draft.favorieteCoucineRecipes),
 });
 
@@ -212,6 +261,32 @@ const loadGoogleIdentityScript = (): Promise<void> => {
   return googleScriptPromise;
 };
 
+const viewIcons: Record<ViewKey, typeof BarChartSquare02> = {
+  dashboard: BarChartSquare02,
+  diet: Target04,
+  workout: Activity,
+  shopping: ShoppingBag02,
+  settings: Settings02,
+};
+
+const heroHighlights = [
+  {
+    icon: Shield01,
+    title: "Session-based access",
+    body: "Email/password or Google sign-in, with expiring sessions instead of raw user IDs.",
+  },
+  {
+    icon: Target04,
+    title: "Flexible diet mode",
+    body: "Switch between single foods and recipes without leaving the workspace.",
+  },
+  {
+    icon: ShoppingBag02,
+    title: "Weekly market list",
+    body: "See grams for foods, milliliters for liquids, AU store estimates, and persistent check-offs.",
+  },
+] as const;
+
 function App() {
   const defaultSelectedDay = getCurrentWeek().find((day) => day.date === todayKey())?.dayNumber ?? 1;
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
@@ -247,10 +322,12 @@ function App() {
     preparationTimeMinutes?: number;
   } | null>(null);
   const mealActionQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const authLayoutRef = useRef<HTMLDivElement | null>(null);
 
   const weekDays = getCurrentWeek();
   const today = todayKey();
   const weekByNumber = dayDateMap(weekDays);
+  const currentWeekPosition = weekDays.find((day) => day.date === today)?.dayNumber ?? 1;
   const profileComplete = user ? isProfileReady(user) : false;
 
   useEffect(() => {
@@ -288,6 +365,55 @@ function App() {
       window.removeEventListener(unauthorizedEvent, handleUnauthorized as EventListener);
     };
   }, []);
+
+  useLayoutEffect(() => {
+    if (!authLayoutRef.current || (sessionUserId && user)) {
+      return undefined;
+    }
+
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      return undefined;
+    }
+
+    const context = gsap.context(() => {
+      const introTimeline = gsap.timeline({
+        defaults: {
+          ease: "power3.out",
+        },
+      });
+
+      introTimeline
+        .from("[data-hero-brand]", { y: 28, opacity: 0, duration: 0.8 })
+        .from("[data-hero-headline]", { y: 40, opacity: 0, duration: 0.9 }, "-=0.45")
+        .from("[data-hero-copy]", { y: 24, opacity: 0, duration: 0.72 }, "-=0.5")
+        .from("[data-hero-google]", { y: 24, opacity: 0, scale: 0.98, duration: 0.68 }, "-=0.4")
+        .from("[data-hero-card]", { y: 28, opacity: 0, duration: 0.65, stagger: 0.12 }, "-=0.28")
+        .from("[data-auth-card]", { x: 28, opacity: 0, duration: 0.72, stagger: 0.14 }, "-=0.7");
+
+      gsap.to("[data-logo-badge]", {
+        y: -10,
+        rotate: -4,
+        duration: 2.8,
+        repeat: -1,
+        yoyo: true,
+        ease: "sine.inOut",
+      });
+
+      gsap.to("[data-hero-card]", {
+        y: -6,
+        duration: 2.4,
+        repeat: -1,
+        yoyo: true,
+        ease: "sine.inOut",
+        stagger: 0.18,
+        delay: 1,
+      });
+    }, authLayoutRef);
+
+    return () => {
+      context.revert();
+    };
+  }, [sessionUserId, user]);
 
   async function restoreSession(storedSession: StoredSession) {
     setBusyAction("workspace");
@@ -647,7 +773,9 @@ function App() {
   if (!hydrated || busyAction === "workspace") {
     return (
       <div className="loading-screen">
-        <div className="loading-orb" />
+        <div className="loading-orb">
+          <img src="/ai-shape-logo.svg" alt="" aria-hidden="true" />
+        </div>
         <p>{statusMessage}</p>
       </div>
     );
@@ -655,15 +783,23 @@ function App() {
 
   if (!sessionUserId || !user) {
     return (
-      <div className="auth-layout">
+      <div className="auth-layout" ref={authLayoutRef}>
         <section className="auth-hero">
-          <div className="eyebrow">AI Shape Studio</div>
-          <h1>Build a week that feels coached, not generic.</h1>
-          <p>
+          <div className="hero-brand" data-hero-brand>
+            <div className="hero-logo-shell" data-logo-badge>
+              <img src="/ai-shape-logo.svg" alt="AI Shape logo" className="hero-logo" />
+            </div>
+            <div className="hero-brand-copy">
+              <div className="eyebrow">AI Shape Studio</div>
+              <span>Nutrition, training, and recovery planning in one adaptive board.</span>
+            </div>
+          </div>
+          <h1 data-hero-headline>Build a week that feels coached, not generic.</h1>
+          <p data-hero-copy>
             Start with your body data, your food style, and the time you actually have.
             The app maps your diet, training, market list, and daily progress in one place.
           </p>
-          <div className="hero-google-entry">
+          <div className="hero-google-entry" data-hero-google>
             <div className="hero-google-copy">
               <strong>Continue with Google</strong>
               <span>Tap the round Google entry to sign up or sign in with the same account chooser.</span>
@@ -676,23 +812,24 @@ function App() {
             />
           </div>
           <div className="hero-grid">
-            <article>
-              <strong>Session-based access</strong>
-              <span>Email/password or Google sign-in, with expiring sessions instead of raw user IDs.</span>
-            </article>
-            <article>
-              <strong>Flexible diet mode</strong>
-              <span>Switch between single foods and recipes without leaving the workspace.</span>
-            </article>
-            <article>
-              <strong>Weekly market list</strong>
-              <span>See grams for foods, milliliters for liquids, AU store estimates, and persistent check-offs.</span>
-            </article>
+            {heroHighlights.map((item) => {
+              const Icon = item.icon;
+
+              return (
+                <article key={item.title} data-hero-card>
+                  <span className="feature-icon">
+                    <Icon />
+                  </span>
+                  <strong>{item.title}</strong>
+                  <span>{item.body}</span>
+                </article>
+              );
+            })}
           </div>
         </section>
 
         <section className="auth-panel">
-          <div className="auth-card">
+          <div className="auth-card" data-auth-card>
             <h2>Create your member</h2>
             <form onSubmit={createAccount} className="stack">
               <label>
@@ -727,7 +864,7 @@ function App() {
             </form>
           </div>
 
-          <div className="auth-card subtle">
+          <div className="auth-card subtle" data-auth-card>
             <h2>Sign back in</h2>
             <form onSubmit={signIn} className="stack">
               <label>
@@ -772,22 +909,34 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <span className="eyebrow">AI Shape</span>
-          <h1>{user.name || "New member"}</h1>
+          <div className="sidebar-brand-top">
+            <div className="sidebar-brand-mark">
+              <img src="/ai-shape-logo.svg" alt="AI Shape logo" />
+            </div>
+            <div className="sidebar-brand-copy">
+              <span className="eyebrow">AI Shape</span>
+              <h1>{user.name || "New member"}</h1>
+            </div>
+          </div>
           <p>{user.goal ? titleCase(user.goal) : "Finish your assessment to unlock your week."}</p>
         </div>
 
         <nav className="sidebar-nav">
-          {(Object.keys(viewLabels) as ViewKey[]).map((view) => (
-            <button
-              key={view}
-              type="button"
-              className={activeView === view ? "nav-pill active" : "nav-pill"}
-              onClick={() => startTransition(() => setActiveView(view))}
-            >
-              {viewLabels[view]}
-            </button>
-          ))}
+          {(Object.keys(viewLabels) as ViewKey[]).map((view) => {
+            const Icon = viewIcons[view];
+
+            return (
+              <button
+                key={view}
+                type="button"
+                className={activeView === view ? "nav-pill active" : "nav-pill"}
+                onClick={() => startTransition(() => setActiveView(view))}
+              >
+                <Icon className="nav-icon" />
+                <span>{viewLabels[view]}</span>
+              </button>
+            );
+          })}
         </nav>
 
         <div className="sidebar-footer">
@@ -826,16 +975,31 @@ function App() {
           </div>
           <div className="hero-stats">
             <article>
-              <span>Diet Mode</span>
-              <strong>{user.kindOfDiet === "recipes" ? "Recipes" : "Single foods"}</strong>
+              <span className="hero-stat-icon">
+                <Target04 />
+              </span>
+              <div className="hero-stat-copy">
+                <span>Diet Mode</span>
+                <strong>{user.kindOfDiet === "recipes" ? "Recipes" : "Single foods"}</strong>
+              </div>
             </article>
             <article>
-              <span>Daily Target</span>
-              <strong>{formatNumber(user.caloriesTarget)} kcal</strong>
+              <span className="hero-stat-icon">
+                <Zap />
+              </span>
+              <div className="hero-stat-copy">
+                <span>Daily Target</span>
+                <strong>{formatEnergyValue(user.kilojoulesTarget, user.energyUnitPreference)}</strong>
+              </div>
             </article>
             <article>
-              <span>Week Coverage</span>
-              <strong>{dietPlan?.days.length ?? 0}/7 days</strong>
+              <span className="hero-stat-icon">
+                <CalendarCheck02 />
+              </span>
+              <div className="hero-stat-copy">
+                <span>Week Coverage</span>
+                <strong>{currentWeekPosition}/7</strong>
+              </div>
             </article>
           </div>
         </section>
@@ -856,13 +1020,12 @@ function App() {
               <DashboardView
                 user={user}
                 todayProgress={todayProgress}
-                monthSummary={monthSummary}
-                yearSummary={yearSummary}
                 weekDays={weekDays}
                 weekProgress={weekProgress}
                 shoppingList={shoppingList}
                 onGenerate={() => regenerateWeek((user.kindOfDiet === "recipes" ? "recipes" : "single-food"))}
                 busyAction={busyAction}
+                energyUnitPreference={user.energyUnitPreference}
               />
             ) : null}
 
@@ -884,6 +1047,7 @@ function App() {
                 weekProgress={weekProgress}
                 isRegenerating={busyAction === "generate"}
                 pendingMealKey={pendingMealKey}
+                energyUnitPreference={user.energyUnitPreference}
               />
             ) : null}
 
@@ -896,6 +1060,7 @@ function App() {
                 weekDays={weekDays}
                 weekProgress={weekProgress}
                 pendingWorkoutDay={pendingWorkoutDay}
+                energyUnitPreference={user.energyUnitPreference}
               />
             ) : null}
 
@@ -932,19 +1097,26 @@ function App() {
 function DashboardView(props: {
   user: UserProfile;
   todayProgress: ProgressDay | null;
-  monthSummary: ProgressSummary | null;
-  yearSummary: ProgressSummary | null;
   weekDays: WeekDay[];
   weekProgress: Record<string, ProgressDay>;
   shoppingList: ShoppingList | null;
   onGenerate: () => void;
   busyAction: string | null;
+  energyUnitPreference: EnergyUnit;
 }) {
-  const { user, todayProgress, monthSummary, yearSummary, weekDays, weekProgress, shoppingList } = props;
-  const consumed = todayProgress?.totals.caloriesConsumed ?? 0;
-  const burned = todayProgress?.totals.caloriesBurned ?? 0;
-  const target = user.caloriesTarget ?? 0;
-  const net = todayProgress?.totals.netCalories ?? 0;
+  const {
+    user,
+    todayProgress,
+    weekDays,
+    weekProgress,
+    shoppingList,
+    energyUnitPreference,
+  } = props;
+  const consumed = todayProgress?.totals.kilojoulesConsumed ?? 0;
+  const burned = todayProgress?.totals.kilojoulesBurned ?? 0;
+  const target = user.kilojoulesTarget ?? 0;
+  const net = todayProgress?.totals.netKilojoules ?? 0;
+  const delta = todayProgress?.totals.kilojouleDeltaFromTarget ?? 0;
 
   return (
     <div className="view-grid">
@@ -960,13 +1132,14 @@ function DashboardView(props: {
             onClick={props.onGenerate}
             disabled={props.busyAction === "generate"}
           >
+            <RefreshCcw02 className="button-icon" />
             {props.busyAction === "generate" ? "Refreshing week..." : "Refresh week"}
           </button>
         </div>
         <div className="stats-grid">
-          <MetricCard title="Consumed" value={`${formatNumber(consumed)} kcal`} detail={`${progressPercent(consumed, target).toFixed(0)}% of target`} />
-          <MetricCard title="Burned" value={`${formatNumber(burned)} kcal`} detail={`${formatNumber(todayProgress?.totals.kilojoulesBurned ?? 0)} kJ`} />
-          <MetricCard title="Net" value={`${formatNumber(net)} kcal`} detail={`${formatNumber(todayProgress?.totals.calorieDeltaFromTarget ?? 0)} vs target`} />
+          <MetricCard title="Consumed" value={formatEnergyValue(consumed, energyUnitPreference)} detail={`${progressPercent(consumed, target).toFixed(0)}% of target`} />
+          <MetricCard title="Burned" value={formatEnergyValue(burned, energyUnitPreference)} detail={formatEnergyValue(todayProgress?.totals.kilojoulesBurned ?? 0, "kj")} />
+          <MetricCard title="Net" value={formatEnergyValue(net, energyUnitPreference)} detail={`${formatEnergyValue(delta, energyUnitPreference)} vs target`} />
           <MetricCard
             title="Market plan"
             value={`${shoppingList?.metadata.totalItems ?? 0} items`}
@@ -978,7 +1151,7 @@ function DashboardView(props: {
 
         <div className="progress-rail">
           <div className="progress-copy">
-            <strong>Calorie pace</strong>
+            <strong>Energy pace</strong>
             <span>Consumed versus target</span>
           </div>
           <div className="bar-shell">
@@ -1013,40 +1186,126 @@ function DashboardView(props: {
         </div>
       </section>
 
-      <section className="panel">
-        <div className="panel-header">
-          <div>
-            <span className="eyebrow">Month</span>
-            <h3>Current month</h3>
-          </div>
-        </div>
-        <SummaryCard summary={monthSummary} />
-      </section>
-
-      <section className="panel span-2">
-        <div className="panel-header">
-          <div>
-            <span className="eyebrow">Year</span>
-            <h3>Longer view</h3>
-          </div>
-        </div>
-        <SummaryCard summary={yearSummary} wide />
-      </section>
-
-      <section className="panel">
-        <div className="panel-header">
-          <div>
-            <span className="eyebrow">Coach note</span>
-            <h3>Focus today</h3>
-          </div>
-        </div>
-        <p className="coach-note">
-          Keep the workflow simple: eat through your planned meals, mark them as you go, and use
-          the workout check-off when the session is complete. The dashboard recalculates your day
-          immediately.
-        </p>
+      <section className="panel span-full">
+        <BodyCompositionChart
+          user={user}
+          weekDays={weekDays}
+          weekProgress={weekProgress}
+          energyUnitPreference={energyUnitPreference}
+        />
       </section>
     </div>
+  );
+}
+
+function BodyCompositionChart(props: {
+  user: UserProfile;
+  weekDays: WeekDay[];
+  weekProgress: Record<string, ProgressDay>;
+  energyUnitPreference: EnergyUnit;
+}) {
+  const chartWidth = 640;
+  const chartHeight = 240;
+  const paddingX = 28;
+  const paddingTop = 20;
+  const paddingBottom = 38;
+  const usableHeight = chartHeight - paddingTop - paddingBottom;
+  const usableWidth = chartWidth - (paddingX * 2);
+  const target = Math.max(props.user.kilojoulesTarget, 1);
+
+  const points = props.weekDays.map((weekDay, index) => {
+    const progress = props.weekProgress[weekDay.date];
+    const netKilojoules = progress?.totals.netKilojoules ?? 0;
+    const burnedKilojoules = progress?.totals.kilojoulesBurned ?? 0;
+    const mealsCompleted = progress?.totals.mealsCompleted ?? 0;
+    const workoutCompleted = progress?.workout.completed ?? false;
+    const intakeRatio = netKilojoules / target;
+    const deficitRatio = Math.max(0, (target - netKilojoules) / target);
+    const muscleGrowth = Math.max(
+      0,
+      Math.min(100, (intakeRatio * 42) + (mealsCompleted * 5) + (workoutCompleted ? 26 : 8)),
+    );
+    const fatBurn = Math.max(
+      0,
+      Math.min(100, (deficitRatio * 72) + (burnedKilojoules > 0 ? 16 : 0) + (workoutCompleted ? 10 : 0)),
+    );
+
+    return {
+      label: weekDay.shortLabel,
+      x: paddingX + ((usableWidth / Math.max(props.weekDays.length - 1, 1)) * index),
+      muscleGrowth,
+      fatBurn,
+      netKilojoules,
+    };
+  });
+
+  const resolveY = (value: number): number => (
+    paddingTop + ((100 - value) / 100) * usableHeight
+  );
+
+  const musclePath = points.map((point) => `${point.x},${resolveY(point.muscleGrowth)}`).join(" ");
+  const fatPath = points.map((point) => `${point.x},${resolveY(point.fatBurn)}`).join(" ");
+  const averageNet = points.length > 0
+    ? Math.round(points.reduce((sum, point) => sum + point.netKilojoules, 0) / points.length)
+    : 0;
+  const averageMuscle = points.length > 0
+    ? Math.round(points.reduce((sum, point) => sum + point.muscleGrowth, 0) / points.length)
+    : 0;
+  const averageFat = points.length > 0
+    ? Math.round(points.reduce((sum, point) => sum + point.fatBurn, 0) / points.length)
+    : 0;
+
+  return (
+    <>
+      <div className="panel-header">
+        <div>
+          <span className="eyebrow">Body composition trend</span>
+          <h3>Muscle growth vs fat burn</h3>
+          <p className="muted-line">
+            Estimation based on weekly energy balance and completed workouts.
+          </p>
+        </div>
+      </div>
+
+      <div className="chart-legend">
+        <span className="chart-legend-item muscle">Muscle growth</span>
+        <span className="chart-legend-item fat">Fat burn</span>
+      </div>
+
+      <div className="body-chart-shell">
+        <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="body-chart" role="img" aria-label="Estimated muscle growth versus fat burn trend">
+          {[0, 25, 50, 75, 100].map((value) => (
+            <g key={value}>
+              <line
+                x1={paddingX}
+                y1={resolveY(value)}
+                x2={chartWidth - paddingX}
+                y2={resolveY(value)}
+                className="body-chart-grid"
+              />
+              <text x={6} y={resolveY(value) + 4} className="body-chart-axis">{value}</text>
+            </g>
+          ))}
+
+          <polyline points={fatPath} className="body-chart-line fat" />
+          <polyline points={musclePath} className="body-chart-line muscle" />
+
+          {points.map((point) => (
+            <g key={point.label}>
+              <circle cx={point.x} cy={resolveY(point.fatBurn)} r={4} className="body-chart-dot fat" />
+              <circle cx={point.x} cy={resolveY(point.muscleGrowth)} r={4} className="body-chart-dot muscle" />
+              <text x={point.x} y={chartHeight - 10} textAnchor="middle" className="body-chart-axis">{point.label}</text>
+            </g>
+          ))}
+        </svg>
+      </div>
+
+      <div className="stats-grid composition-stats">
+        <MetricCard title="Avg muscle" value={`${averageMuscle}%`} detail="Estimated weekly signal" />
+        <MetricCard title="Avg fat burn" value={`${averageFat}%`} detail="Estimated weekly signal" />
+        <MetricCard title="Avg net energy" value={formatEnergyValue(averageNet, props.energyUnitPreference)} detail="Across this week" />
+      </div>
+    </>
   );
 }
 
@@ -1062,6 +1321,7 @@ function DietView(props: {
   weekProgress: Record<string, ProgressDay>;
   isRegenerating: boolean;
   pendingMealKey: string | null;
+  energyUnitPreference: EnergyUnit;
 }) {
   if (!props.plan) {
     return (
@@ -1082,7 +1342,7 @@ function DietView(props: {
         <div className="panel-header split-end">
           <div>
             <span className="eyebrow">7-day diet</span>
-            <h3>{formatNumber(props.plan.summary.dailyCalories)} kcal target</h3>
+            <h3>{formatEnergyValue(Math.round(props.plan.summary.dailyCalories * kilojoulesPerCalorie), props.energyUnitPreference)} target</h3>
             <p className="muted-line">
               Protein {props.plan.summary.macros.protein} · Carbs {props.plan.summary.macros.carbs} · Fats {props.plan.summary.macros.fats}
             </p>
@@ -1126,13 +1386,15 @@ function DietView(props: {
           const progress = activeProgress?.meals[meal.slot];
           const done = progress?.completed ?? false;
           const currentMealKey = `${activeDate}:${meal.slot}`;
+          const primaryEntry = entries[0];
+          const cardTitle = primaryEntry?.object ?? "Open slot";
 
           return (
             <article key={meal.slot} className="panel meal-card">
               <div className="panel-header split-end">
                 <div>
                   <span className="eyebrow">{meal.title}</span>
-                  <h3>{entries[0]?.object || "Open slot"}</h3>
+                  <h3>{cardTitle}</h3>
                 </div>
                 <button
                   type="button"
@@ -1147,13 +1409,14 @@ function DietView(props: {
               {entries.map((entry, index) => (
                 <div key={`${meal.slot}-${index}`} className="entry-block">
                   <p className="entry-description">{entry.description}</p>
-                  {entry.instructions?.length ? (
+                  {props.currentDietType === "recipes" && entry.instructions?.length ? (
                     <button
                       type="button"
                       className="recipe-button"
                       onClick={() => props.onOpenRecipe(entry)}
                     >
-                      Open recipe
+                      <span>Open recipe</span>
+                      <ArrowRight className="button-icon" />
                     </button>
                   ) : null}
                   <div className="macro-line">
@@ -1188,6 +1451,7 @@ function WorkoutView(props: {
   weekDays: WeekDay[];
   weekProgress: Record<string, ProgressDay>;
   pendingWorkoutDay: number | null;
+  energyUnitPreference: EnergyUnit;
 }) {
   if (!props.plan) {
     return (
@@ -1209,7 +1473,11 @@ function WorkoutView(props: {
             <span className="eyebrow">Training week</span>
             <h3>{props.plan.overview.split}</h3>
             <p className="muted-line">
-              {props.plan.overview.avgDuration} average · {formatNumber(props.plan.overview.estimatedWeeklyCaloriesBurned ?? 0)} kcal weekly burn
+              {props.plan.overview.avgDuration} average · {formatEnergyValue(
+                props.plan.overview.estimatedWeeklyKilojoulesBurned
+                  ?? Math.round((props.plan.overview.estimatedWeeklyCaloriesBurned ?? 0) * kilojoulesPerCalorie),
+                props.energyUnitPreference,
+              )} weekly burn
             </p>
           </div>
         </div>
@@ -1223,7 +1491,11 @@ function WorkoutView(props: {
               onClick={() => props.onSelectDay(day.day)}
             >
               <strong>{day.dayName}</strong>
-              <span>{formatNumber(day.estimatedCaloriesBurned ?? 0)} kcal</span>
+              <span>{formatEnergyValue(
+                day.estimatedKilojoulesBurned
+                  ?? Math.round((day.estimatedCaloriesBurned ?? 0) * kilojoulesPerCalorie),
+                props.energyUnitPreference,
+              )}</span>
             </button>
           ))}
         </div>
@@ -1235,7 +1507,11 @@ function WorkoutView(props: {
             <span className="eyebrow">{activeDay.dayName}</span>
             <h3>{activeDay.focus}</h3>
             <p className="muted-line">
-              {activeDay.totalDuration} · {formatNumber(activeDay.estimatedCaloriesBurned ?? 0)} kcal burn
+              {activeDay.totalDuration} · {formatEnergyValue(
+                activeDay.estimatedKilojoulesBurned
+                  ?? Math.round((activeDay.estimatedCaloriesBurned ?? 0) * kilojoulesPerCalorie),
+                props.energyUnitPreference,
+              )} burn
             </p>
           </div>
           <button
@@ -1621,8 +1897,23 @@ function ProfileEditor(props: {
           <Field label="Time to train (minutes)">
             <input type="number" value={draft.timeToTrain} onChange={(event) => updateField("timeToTrain", event.target.value)} placeholder="45" />
           </Field>
-          <Field label="Meals per day">
-            <input type="number" value={draft.numberOfMeals} onChange={(event) => updateField("numberOfMeals", event.target.value)} placeholder="4" />
+          <Field label="Daily foods">
+            <input
+              type="number"
+              min={mealsPerDayMin}
+              max={mealsPerDayMax}
+              value={draft.numberOfMeals}
+              onChange={(event) => updateField("numberOfMeals", event.target.value)}
+              placeholder="4"
+            />
+          </Field>
+          <Field label="Energy unit">
+            <select
+              value={draft.energyUnitPreference}
+              onChange={(event) => updateField("energyUnitPreference", event.target.value as EnergyUnit)}
+            >
+              {energyUnitOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+            </select>
           </Field>
           <Field label="Favorite foods">
             <textarea value={draft.favoriteFoods} onChange={(event) => updateField("favoriteFoods", event.target.value)} placeholder="chicken, rice, berries" />
@@ -1651,6 +1942,7 @@ function ProfileEditor(props: {
             onClick={props.onSave}
             disabled={props.busyAction === "save"}
           >
+            <CheckCircle className="button-icon" />
             {props.busyAction === "save" ? "Saving..." : "Save only"}
           </button>
           <button
@@ -1659,6 +1951,7 @@ function ProfileEditor(props: {
             onClick={props.onSaveAndGenerate}
             disabled={props.busyAction === "generate"}
           >
+            <Zap className="button-icon" />
             {props.busyAction === "generate" ? "Building your week..." : "Save and build week"}
           </button>
         </div>
@@ -1686,7 +1979,11 @@ function MetricCard(props: { title: string; value: string; detail: string }) {
   );
 }
 
-function SummaryCard(props: { summary: ProgressSummary | null; wide?: boolean }) {
+function SummaryCard(props: {
+  summary: ProgressSummary | null;
+  wide?: boolean;
+  energyUnitPreference: EnergyUnit;
+}) {
   if (!props.summary || props.summary.totals.trackedDays === 0) {
     return <p className="empty-line">No tracked entries yet.</p>;
   }
@@ -1695,8 +1992,8 @@ function SummaryCard(props: { summary: ProgressSummary | null; wide?: boolean })
     <div className={props.wide ? "summary-card wide" : "summary-card"}>
       <div className="stats-grid summary-stats">
         <MetricCard title="Tracked days" value={String(props.summary.totals.trackedDays)} detail={props.summary.period} />
-        <MetricCard title="Consumed" value={`${formatNumber(props.summary.totals.caloriesConsumed)} kcal`} detail={`${formatNumber(props.summary.totals.kilojoulesConsumed)} kJ`} />
-        <MetricCard title="Burned" value={`${formatNumber(props.summary.totals.caloriesBurned)} kcal`} detail={`${formatNumber(props.summary.totals.kilojoulesBurned)} kJ`} />
+        <MetricCard title="Consumed" value={formatEnergyValue(props.summary.totals.kilojoulesConsumed, props.energyUnitPreference)} detail={formatEnergyValue(props.summary.totals.kilojoulesConsumed, "kj")} />
+        <MetricCard title="Burned" value={formatEnergyValue(props.summary.totals.kilojoulesBurned, props.energyUnitPreference)} detail={formatEnergyValue(props.summary.totals.kilojoulesBurned, "kj")} />
         <MetricCard title="Meals completed" value={String(props.summary.totals.mealsCompleted)} detail={`${props.summary.totals.workoutsCompleted} workouts`} />
       </div>
       <div className="breakdown-list">
@@ -1707,8 +2004,8 @@ function SummaryCard(props: { summary: ProgressSummary | null; wide?: boolean })
               <span>{row.trackedDays} tracked days</span>
             </div>
             <div className="mini-row-values">
-              <span>{formatNumber(row.caloriesConsumed)} in</span>
-              <span>{formatNumber(row.caloriesBurned)} out</span>
+              <span>{formatEnergyValue(row.kilojoulesConsumed, props.energyUnitPreference)} in</span>
+              <span>{formatEnergyValue(row.kilojoulesBurned, props.energyUnitPreference)} out</span>
             </div>
           </div>
         ))}
@@ -1720,6 +2017,9 @@ function SummaryCard(props: { summary: ProgressSummary | null; wide?: boolean })
 function EmptyState(props: { title: string; body: string }) {
   return (
     <section className="panel empty-state">
+      <span className="empty-icon">
+        <Package />
+      </span>
       <span className="eyebrow">Nothing saved yet</span>
       <h3>{props.title}</h3>
       <p>{props.body}</p>

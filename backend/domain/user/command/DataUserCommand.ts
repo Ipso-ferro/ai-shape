@@ -1,3 +1,5 @@
+import type { EnergyUnit } from "../../../src/types";
+
 export interface DataUserCommand {
   id: string;
   name: string;
@@ -17,6 +19,7 @@ export interface DataUserCommand {
   favoriteFoods: string[];
   supplementation: string[];
   numberOfMeals: number;
+  energyUnitPreference: EnergyUnit;
   caloriesTarget: number;
   kilojoulesTarget: number;
   proteinTarget: number;

@@ -46,13 +46,13 @@ export async function generateDietPlan(
       || !Array.isArray(response.dietPlan.days)
       || response.dietPlan.days.length !== 7
       || response.dietPlan.days.some((day) => (
-        !isValidDietEntry(day.breakfast)
-        || !isValidDietEntry(day.snack1)
-        || !isValidDietEntry(day.lunch)
-        || !isValidDietEntry(day.dinner)
-        || !isValidDietEntry(day.snack2)
+        !isValidDietEntry(day.breakfast, dietType)
+        || !isValidDietEntry(day.snack1, dietType)
+        || !isValidDietEntry(day.lunch, dietType)
+        || !isValidDietEntry(day.dinner, dietType)
+        || !isValidDietEntry(day.snack2, dietType)
         || !Array.isArray(day.supplements)
-        || day.supplements.some((entry) => !isValidDietEntry(entry))
+        || day.supplements.some((entry) => !isValidDietEntry(entry, dietType))
       ))
     ) {
       throw new Error("Invalid diet plan structure received from API");
@@ -79,10 +79,11 @@ export async function generateDietPlan(
  * Fallback diet plan generator
  */
 export async function generateFallbackDietPlan(
-  userData: DataUserCommand
+  userData: DataUserCommand,
+  dietType: DietType
 ): Promise<ApiResponse<DietPlan>> {
-  console.log("🔄 Executing fallback diet plan (single-food mode)...");
-  return generateDietPlan(userData, "single-food");
+  console.log(`🔄 Executing fallback diet plan (${dietType} mode)...`);
+  return generateDietPlan(userData, dietType);
 }
 
 /**
@@ -90,6 +91,32 @@ export async function generateFallbackDietPlan(
  */
 function buildDietUserPrompt(userData: DataUserCommand, dietType: DietType): string {
   const context: DietContext = calculateDietContext(userData, dietType);
+  const singleFoodRules = dietType === "single-food"
+    ? `
+SINGLE-FOOD RULES:
+- Do not generate chef-style recipes or cooking workflows.
+- Each meal slot must be a complete simple meal built from plain foods with exact quantities.
+- Use simple foods only inside the meal: eggs, bread, coffee, chicken, rice, salad, fruit, yogurt, oats, etc.
+- The "object" should name the whole meal, not a single ingredient.
+- The "ingredients" array should usually contain 2 to 5 plain foods with exact quantities.
+- Good examples: eggs + toast + coffee for breakfast, yogurt + berries for snack, salad + chicken for dinner.
+- Keep preparation minimal and practical. "instructions" and "preparationTimeMinutes" should usually be omitted.
+`
+    : "";
+  const entryRequirements = dietType === "single-food"
+    ? `Every meal entry and supplement entry must include:
+- "object": the simple meal name
+- "description": one short sentence
+- "quantity": exact amount
+- "quantityUnit": "unit", "g", or "ml"
+- "ingredients": the plain foods that make up the meal
+- "macros", "calories", and "kilojoules"`
+    : `Every meal entry and every supplement entry must include:
+- A real recipe name, not just a list of foods
+- An "ingredients" array with at least 2 ingredients
+- "instructions": string[] with 2 to 5 short preparation steps
+- "preparationTimeMinutes": number
+- Recipe-style preparation details that match the meal`;
 
   return `Create a personalized 7-day ${dietType} diet plan.
 
@@ -118,17 +145,14 @@ DIETARY SPECIFICATIONS:
 - Preferred cuisines: ${context.cuisineOptions}
 
 PLAN TYPE: ${context.mealStructure}
+${singleFoodRules}
 
 ADDITIONAL NOTES:
 ${userData.isPro ? "Client is advanced - include nutrient timing and supplement suggestions." : "Keep plan simple and sustainable for beginner/intermediate level."}
 
 Generate the complete 7-day plan now.
 
-Every meal entry and every supplement entry must include:
-- "instructions": string[] with 2 to 5 short preparation steps
-- "preparationTimeMinutes": number
-- For "single-food", instructions can be very simple prep or serving steps
-- For "recipes", instructions must describe the actual recipe preparation
+${entryRequirements}
 
 Return ONLY valid JSON with this exact top-level structure and exactly 7 entries in days:
 {
@@ -295,7 +319,7 @@ function calculateDietContext(userData: DataUserCommand, dietType: DietType): Di
     : "International variety";
 
   const mealStructure: string = dietType === "single-food" 
-    ? "SINGLE FOOD - Each meal slot must contain a main food object with exact quantity, quantityUnit (prefer g or ml), an ingredients array with one or more foods and per-ingredient quantities, short description, simple prep instructions, preparationTimeMinutes, macros, calories, and kilojoules."
+    ? "SIMPLE MEALS FROM SINGLE FOODS - Each meal slot must contain a full meal made from plain foods with exact quantities, short description, macros, calories, and kilojoules, but not recipe-style preparation."
     : `RECIPE-BASED - Each meal slot must contain one recipe object with total quantity, quantityUnit (prefer g or ml), an ingredients array with exact per-ingredient quantities, a concise description, cuisine influence (${cuisineOptions}), clear preparation instructions, preparationTimeMinutes, macros, calories, and kilojoules.`;
 
   return {
@@ -309,7 +333,7 @@ function calculateDietContext(userData: DataUserCommand, dietType: DietType): Di
   };
 }
 
-function isValidDietEntry(entry: unknown): boolean {
+function isValidDietEntry(entry: unknown, dietType: DietType): boolean {
   if (typeof entry !== "object" || entry === null) {
     return false;
   }
@@ -319,22 +343,37 @@ function isValidDietEntry(entry: unknown): boolean {
     description?: unknown;
     quantity?: unknown;
     quantityUnit?: unknown;
-    ingredients?: unknown;
+    ingredients?: Array<unknown>;
     instructions?: unknown;
     preparationTimeMinutes?: unknown;
   };
 
-  return typeof candidate.object === "string"
+  const hasBaseShape = typeof candidate.object === "string"
     && typeof candidate.description === "string"
     && typeof candidate.quantity === "number"
     && typeof candidate.quantityUnit === "string"
-    && Array.isArray(candidate.ingredients)
-    && (
-      candidate.instructions === undefined
-      || Array.isArray(candidate.instructions)
-    )
-    && (
-      candidate.preparationTimeMinutes === undefined
-      || typeof candidate.preparationTimeMinutes === "number"
-    );
+    && Array.isArray(candidate.ingredients);
+
+  if (!hasBaseShape) {
+    return false;
+  }
+
+  const ingredients = Array.isArray(candidate.ingredients) ? candidate.ingredients : [];
+  const ingredientCount = ingredients.length;
+
+  if (dietType === "recipes") {
+    return ingredientCount >= 2
+      && Array.isArray(candidate.instructions)
+      && candidate.instructions.length >= 2
+      && typeof candidate.preparationTimeMinutes === "number"
+      && candidate.preparationTimeMinutes > 0;
+  }
+
+  return (
+    candidate.instructions === undefined
+    || Array.isArray(candidate.instructions)
+  ) && (
+    candidate.preparationTimeMinutes === undefined
+    || typeof candidate.preparationTimeMinutes === "number"
+  );
 }

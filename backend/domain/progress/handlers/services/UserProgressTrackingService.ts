@@ -31,12 +31,16 @@ const weekdayNames = [
 ] as const;
 
 const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
+const kilojoulesPerCalorie = 4.184;
 
 const createEmptyMealStatus = (): UserProgressMealStatus => ({
   completed: false,
   completedAt: null,
   calories: 0,
   kilojoules: 0,
+  proteinGrams: 0,
+  carbsGrams: 0,
+  fatsGrams: 0,
 });
 
 const createEmptyTotals = (): UserProgressTotals => ({
@@ -51,6 +55,25 @@ const createEmptyTotals = (): UserProgressTotals => ({
   mealsCompleted: 0,
   workoutsCompleted: 0,
 });
+
+const createEmptyMacroTotals = (): UserProgressDay["macroTotals"] => ({
+  proteinGrams: 0,
+  carbsGrams: 0,
+  fatsGrams: 0,
+});
+
+const toCaloriesFromKilojoules = (kilojoules: number): number => (
+  Math.round(kilojoules / kilojoulesPerCalorie)
+);
+
+const parseMacroGrams = (value: string | undefined): number => {
+  if (typeof value !== "string") {
+    return 0;
+  }
+
+  const match = value.trim().match(/-?\d+(\.\d+)?/);
+  return match ? Math.round(Number(match[0])) : 0;
+};
 
 const normaliseDate = (value: string): string => {
   if (!isoDatePattern.test(value)) {
@@ -124,8 +147,8 @@ const createEmptyProgressDay = (
   planDayNumber: getPlanDayNumber(date),
   planDayName: getPlanDayName(date),
   targets: {
-    calories: Math.round(user.caloriesTarget),
     kilojoules: Math.round(user.kilojoulesTarget),
+    calories: toCaloriesFromKilojoules(Math.round(user.kilojoulesTarget)),
   },
   meals: {
     breakfast: createEmptyMealStatus(),
@@ -141,24 +164,36 @@ const createEmptyProgressDay = (
     caloriesBurned: 0,
     kilojoulesBurned: 0,
   },
+  macroTotals: createEmptyMacroTotals(),
   totals: createEmptyTotals(),
 });
 
-const sumMealStatus = (statuses: UserProgressMealStatus[]): UserProgressTotals => {
-  const caloriesConsumed = statuses.reduce((sum, status) => sum + status.calories, 0);
+const sumMealStatus = (
+  statuses: UserProgressMealStatus[],
+): Pick<UserProgressDay, "macroTotals" | "totals"> => {
   const kilojoulesConsumed = statuses.reduce((sum, status) => sum + status.kilojoules, 0);
   const mealsCompleted = statuses.filter((status) => status.completed).length;
+  const proteinGrams = statuses.reduce((sum, status) => sum + status.proteinGrams, 0);
+  const carbsGrams = statuses.reduce((sum, status) => sum + status.carbsGrams, 0);
+  const fatsGrams = statuses.reduce((sum, status) => sum + status.fatsGrams, 0);
 
   return {
-    ...createEmptyTotals(),
-    caloriesConsumed,
-    kilojoulesConsumed,
-    mealsCompleted,
+    macroTotals: {
+      proteinGrams,
+      carbsGrams,
+      fatsGrams,
+    },
+    totals: {
+      ...createEmptyTotals(),
+      caloriesConsumed: toCaloriesFromKilojoules(kilojoulesConsumed),
+      kilojoulesConsumed,
+      mealsCompleted,
+    },
   };
 };
 
 const recalculateTotals = (progressDay: UserProgressDay): UserProgressDay => {
-  const mealTotals = sumMealStatus([
+  const mealSummary = sumMealStatus([
     progressDay.meals.breakfast,
     progressDay.meals.snack1,
     progressDay.meals.lunch,
@@ -166,23 +201,25 @@ const recalculateTotals = (progressDay: UserProgressDay): UserProgressDay => {
     progressDay.meals.snack2,
     progressDay.meals.supplements,
   ]);
-  const caloriesBurned = progressDay.workout.caloriesBurned;
   const kilojoulesBurned = progressDay.workout.kilojoulesBurned;
-  const netCalories = mealTotals.caloriesConsumed - caloriesBurned;
-  const netKilojoules = mealTotals.kilojoulesConsumed - kilojoulesBurned;
+  const caloriesBurned = toCaloriesFromKilojoules(kilojoulesBurned);
+  const netKilojoules = mealSummary.totals.kilojoulesConsumed - kilojoulesBurned;
+  const netCalories = toCaloriesFromKilojoules(netKilojoules);
+  const kilojouleDeltaFromTarget = netKilojoules - progressDay.targets.kilojoules;
 
   return {
     ...progressDay,
+    macroTotals: mealSummary.macroTotals,
     totals: {
-      caloriesConsumed: mealTotals.caloriesConsumed,
-      kilojoulesConsumed: mealTotals.kilojoulesConsumed,
+      caloriesConsumed: mealSummary.totals.caloriesConsumed,
+      kilojoulesConsumed: mealSummary.totals.kilojoulesConsumed,
       caloriesBurned,
       kilojoulesBurned,
       netCalories,
       netKilojoules,
-      calorieDeltaFromTarget: netCalories - progressDay.targets.calories,
-      kilojouleDeltaFromTarget: netKilojoules - progressDay.targets.kilojoules,
-      mealsCompleted: mealTotals.mealsCompleted,
+      calorieDeltaFromTarget: toCaloriesFromKilojoules(kilojouleDeltaFromTarget),
+      kilojouleDeltaFromTarget,
+      mealsCompleted: mealSummary.totals.mealsCompleted,
       workoutsCompleted: progressDay.workout.completed ? 1 : 0,
     },
   };
@@ -218,8 +255,11 @@ const resolveMealStatusFromEntry = (
   return {
     completed: true,
     completedAt: new Date().toISOString(),
-    calories: toRoundedNumber(entry.calories),
     kilojoules: resolveKilojoules(entry.kilojoules, entry.calories),
+    calories: toCaloriesFromKilojoules(resolveKilojoules(entry.kilojoules, entry.calories)),
+    proteinGrams: parseMacroGrams(entry.macros?.protein),
+    carbsGrams: parseMacroGrams(entry.macros?.carbs),
+    fatsGrams: parseMacroGrams(entry.macros?.fats),
   };
 };
 
@@ -236,12 +276,18 @@ const resolveSupplementsStatus = (
     (sum, entry) => sum + resolveKilojoules(entry.kilojoules, entry.calories),
     0,
   );
+  const proteinGrams = entries.reduce((sum, entry) => sum + parseMacroGrams(entry.macros?.protein), 0);
+  const carbsGrams = entries.reduce((sum, entry) => sum + parseMacroGrams(entry.macros?.carbs), 0);
+  const fatsGrams = entries.reduce((sum, entry) => sum + parseMacroGrams(entry.macros?.fats), 0);
 
   return {
     completed: true,
     completedAt: new Date().toISOString(),
-    calories,
+    calories: calories > 0 ? calories : toCaloriesFromKilojoules(kilojoules),
     kilojoules,
+    proteinGrams,
+    carbsGrams,
+    fatsGrams,
   };
 };
 
@@ -258,14 +304,16 @@ const resolveWorkoutStatus = (
     };
   }
 
+  const kilojoulesBurned = resolveKilojoules(
+    workoutDay.estimatedKilojoulesBurned,
+    workoutDay.estimatedCaloriesBurned,
+  );
+
   return {
     completed: true,
     completedAt: new Date().toISOString(),
-    caloriesBurned: toRoundedNumber(workoutDay.estimatedCaloriesBurned),
-    kilojoulesBurned: resolveKilojoules(
-      workoutDay.estimatedKilojoulesBurned,
-      workoutDay.estimatedCaloriesBurned,
-    ),
+    caloriesBurned: toCaloriesFromKilojoules(kilojoulesBurned),
+    kilojoulesBurned,
   };
 };
 
@@ -432,8 +480,8 @@ export class UserProgressTrackingService {
       planDayNumber: getPlanDayNumber(date),
       planDayName: getPlanDayName(date),
       targets: {
-        calories: Math.round(user.caloriesTarget),
         kilojoules: Math.round(user.kilojoulesTarget),
+        calories: toCaloriesFromKilojoules(Math.round(user.kilojoulesTarget)),
       },
       meals: {
         ...progressDay.meals,
@@ -465,8 +513,8 @@ export class UserProgressTrackingService {
       planDayNumber: getPlanDayNumber(date),
       planDayName: getPlanDayName(date),
       targets: {
-        calories: Math.round(user.caloriesTarget),
         kilojoules: Math.round(user.kilojoulesTarget),
+        calories: toCaloriesFromKilojoules(Math.round(user.kilojoulesTarget)),
       },
       workout: resolveWorkoutStatus(workoutDay, command.completed),
     });

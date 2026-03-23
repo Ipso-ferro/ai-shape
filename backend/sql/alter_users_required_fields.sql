@@ -144,6 +144,24 @@ PREPARE stmt FROM @add_number_of_meals;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+SET @add_energy_unit_preference = (
+  SELECT IF(
+    EXISTS(
+      SELECT 1
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = 'ai_shape'
+        AND TABLE_NAME = 'users'
+        AND COLUMN_NAME = 'energy_unit_preference'
+    ),
+    'SELECT 1',
+    'ALTER TABLE users ADD COLUMN energy_unit_preference VARCHAR(10) NOT NULL DEFAULT ''kj'' AFTER kind_of_diet'
+  )
+);
+
+PREPARE stmt FROM @add_energy_unit_preference;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
 SET @add_calories_target = (
   SELECT IF(
     EXISTS(

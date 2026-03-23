@@ -1,0 +1,80 @@
+@theme {
+  --font-body: var(--font-inter, "Inter"), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-display: var(--font-inter, "Inter"), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  --radius-xs: 0.25rem;
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+  --radius-2xl: 1.5rem;
+  --radius-3xl: 2rem;
+  --radius-full: 9999px;
+
+  --shadow-xs: 0 1px 2px rgba(10, 13, 18, 0.06);
+  --shadow-sm: 0 2px 6px rgba(16, 24, 40, 0.08), 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-md: 0 10px 18px rgba(16, 24, 40, 0.08), 0 4px 6px rgba(16, 24, 40, 0.04);
+  --shadow-lg: 0 24px 48px rgba(25, 55, 43, 0.14), 0 8px 12px rgba(25, 55, 43, 0.06);
+  --shadow-xl: 0 32px 64px rgba(25, 55, 43, 0.16), 0 10px 18px rgba(25, 55, 43, 0.08);
+
+  --color-brand-25: #fff8f3;
+  --color-brand-50: #fff0e7;
+  --color-brand-100: #ffd9c6;
+  --color-brand-200: #ffb89a;
+  --color-brand-300: #fb9871;
+  --color-brand-400: #f28559;
+  --color-brand-500: #eb7449;
+  --color-brand-600: #d45f36;
+  --color-brand-700: #a14e2d;
+  --color-brand-800: #833f23;
+  --color-brand-900: #6b351d;
+
+  --color-success-25: #f8fbf4;
+  --color-success-50: #eef5e5;
+  --color-success-100: #dce9cb;
+  --color-success-200: #bfd7a8;
+  --color-success-300: #98ba79;
+  --color-success-400: #7d9a61;
+  --color-success-500: #687d4f;
+  --color-success-600: #566942;
+  --color-success-700: #475639;
+  --color-success-800: #394430;
+  --color-success-900: #2f3728;
+
+  --color-gray-25: #fffdf9;
+  --color-gray-50: #fbf7ef;
+  --color-gray-100: #f3ecdf;
+  --color-gray-200: #e7dcc8;
+  --color-gray-300: #d5c7ac;
+  --color-gray-400: #b0a38f;
+  --color-gray-500: #8d8273;
+  --color-gray-600: #6c6459;
+  --color-gray-700: #514a43;
+  --color-gray-800: #35302c;
+  --color-gray-900: #1f1c19;
+}
+
+:root {
+  --app-bg: #f6f0e4;
+  --app-bg-subtle: #efe5d1;
+  --app-bg-emphasis: #fff7ea;
+  --app-surface: rgba(255, 249, 239, 0.9);
+  --app-surface-strong: #fffdf8;
+  --app-surface-muted: rgba(255, 247, 236, 0.78);
+  --app-sidebar: #19372b;
+  --app-sidebar-emphasis: #143124;
+  --app-sidebar-soft: #214534;
+  --app-text: #1e2f27;
+  --app-text-secondary: #5e685f;
+  --app-text-tertiary: #7a817b;
+  --app-border: rgba(25, 55, 43, 0.1);
+  --app-border-strong: rgba(25, 55, 43, 0.16);
+  --app-border-inverse: rgba(255, 255, 255, 0.12);
+  --app-brand-soft: rgba(235, 116, 73, 0.12);
+  --app-brand-soft-strong: rgba(235, 116, 73, 0.18);
+  --app-success-soft: rgba(104, 125, 79, 0.14);
+  --app-overlay: rgba(17, 25, 39, 0.34);
+  --app-error-bg: rgba(161, 78, 45, 0.12);
+  --app-error-border: rgba(161, 78, 45, 0.18);
+  --app-error-text: #8e4222;
+}

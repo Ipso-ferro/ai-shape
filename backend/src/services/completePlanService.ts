@@ -46,7 +46,7 @@ export async function generateCompletePlan(
   const dietStrategy: GenerationStrategy<DietPlan> = {
     name: "diet-plan",
     primary: () => generateDietPlan(userData, dietType),
-    fallback: () => generateFallbackDietPlan(userData),
+    fallback: () => generateFallbackDietPlan(userData, dietType),
   };
 
   const workoutStrategy: GenerationStrategy<WorkoutPlan> = {

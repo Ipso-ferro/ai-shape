@@ -113,3 +113,34 @@ CREATE TABLE IF NOT EXISTS user_progress_tracking (
     FOREIGN KEY (user_id) REFERENCES users(id)
     ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS user_tracking (
+  user_id CHAR(36) NOT NULL,
+  tracked_on DATE NOT NULL,
+  target_kilojoules INT UNSIGNED NOT NULL DEFAULT 0,
+  protein_grams INT UNSIGNED NOT NULL DEFAULT 0,
+  carbs_grams INT UNSIGNED NOT NULL DEFAULT 0,
+  fats_grams INT UNSIGNED NOT NULL DEFAULT 0,
+  daily_calories_burned INT UNSIGNED NOT NULL DEFAULT 0,
+  daily_kilojoules_consumed INT UNSIGNED NOT NULL DEFAULT 0,
+  daily_kilojoules_burned INT UNSIGNED NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id),
+  CONSTRAINT fk_user_tracking_user
+    FOREIGN KEY (user_id) REFERENCES users(id)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS user_tracking_history (
+  user_id CHAR(36) NOT NULL,
+  tracked_on DATE NOT NULL,
+  kilojoules_consumed INT UNSIGNED NOT NULL DEFAULT 0,
+  kilojoules_burned INT UNSIGNED NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, tracked_on),
+  CONSTRAINT fk_user_tracking_history_user
+    FOREIGN KEY (user_id) REFERENCES users(id)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

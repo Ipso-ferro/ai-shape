@@ -20,6 +20,7 @@ const sampleUserData: DataUserCommand = {
   trainLocation: "gym",
   timeToTrain: 60,
   numberOfMeals: 4,
+  energyUnitPreference: "kj",
   caloriesTarget: 2978,
   kilojoulesTarget: 12460,
   proteinTarget: 223,

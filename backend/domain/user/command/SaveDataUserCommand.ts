@@ -1,3 +1,5 @@
+import type { EnergyUnit } from "../../../src/types";
+
 export interface SaveDataUserCommand {
   id: string;
   name: string;
@@ -14,6 +16,7 @@ export interface SaveDataUserCommand {
   trainLocation: string;
   timeToTrain: number;
   numberOfMeals: number;
+  energyUnitPreference: EnergyUnit;
   injuries: string[];
   favoriteFoods: string[];
   supplementation: string[];

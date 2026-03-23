@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS users (
   goal VARCHAR(255) DEFAULT NULL,
   diet VARCHAR(100) DEFAULT NULL,
   kind_of_diet VARCHAR(100) DEFAULT NULL,
+  energy_unit_preference VARCHAR(10) NOT NULL DEFAULT 'kj',
   diet_plan_summary JSON DEFAULT NULL,
   workout_plan_overview JSON DEFAULT NULL,
   avoided_foods JSON DEFAULT NULL,
@@ -156,6 +157,37 @@ CREATE TABLE IF NOT EXISTS user_shopping_list (
     ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS user_tracking (
+  user_id CHAR(36) NOT NULL,
+  tracked_on DATE NOT NULL,
+  target_kilojoules INT UNSIGNED NOT NULL DEFAULT 0,
+  protein_grams INT UNSIGNED NOT NULL DEFAULT 0,
+  carbs_grams INT UNSIGNED NOT NULL DEFAULT 0,
+  fats_grams INT UNSIGNED NOT NULL DEFAULT 0,
+  daily_calories_burned INT UNSIGNED NOT NULL DEFAULT 0,
+  daily_kilojoules_consumed INT UNSIGNED NOT NULL DEFAULT 0,
+  daily_kilojoules_burned INT UNSIGNED NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id),
+  CONSTRAINT fk_user_tracking_user
+    FOREIGN KEY (user_id) REFERENCES users(id)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS user_tracking_history (
+  user_id CHAR(36) NOT NULL,
+  tracked_on DATE NOT NULL,
+  kilojoules_consumed INT UNSIGNED NOT NULL DEFAULT 0,
+  kilojoules_burned INT UNSIGNED NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, tracked_on),
+  CONSTRAINT fk_user_tracking_history_user
+    FOREIGN KEY (user_id) REFERENCES users(id)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 /*
 Import this file in phpMyAdmin.
 
@@ -173,10 +205,13 @@ Store array fields as JSON arrays, for example:
 - is_pro: 0 or 1
 - diet_plan_summary: current generated diet summary JSON
 - workout_plan_overview: current generated workout overview JSON
+- energy_unit_preference: 'kj' or 'cal'
 - generated diet day slots are stored as JSON in user_diet_plan by user_id + day_number
 - generated recipe day slots are stored as JSON in user_recipe_plan by user_id + day_number
 - each meal JSON should include object, description, quantity, quantityUnit, ingredients[], macros, calories, kilojoules
 - generated workout days are stored in user_workout_plan_days by user_id + day_number with estimated calorie and kJ burn columns
 - user_progress_tracking stores one row per user per calendar day with meal/workout completion timestamps and consumed/burned totals for daily, monthly, and yearly progress summaries
+- user_tracking stores the active server-side tracking summary with kJ target, daily macros, and burn totals
+- user_tracking_history stores daily kJ consumed and kJ burned by user and tracked day
 - user_shopping_list stores the weekly market list as JSON by user_id and is expected to use `gr` for foods and `ml` for liquids
 */

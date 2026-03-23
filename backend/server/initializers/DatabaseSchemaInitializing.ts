@@ -90,6 +90,41 @@ const createUserProgressTrackingTableStatement = `
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 `;
 
+const createUserTrackingTableStatement = `
+  CREATE TABLE IF NOT EXISTS user_tracking (
+    user_id CHAR(36) NOT NULL,
+    tracked_on DATE NOT NULL,
+    target_kilojoules INT UNSIGNED NOT NULL DEFAULT 0,
+    protein_grams INT UNSIGNED NOT NULL DEFAULT 0,
+    carbs_grams INT UNSIGNED NOT NULL DEFAULT 0,
+    fats_grams INT UNSIGNED NOT NULL DEFAULT 0,
+    daily_calories_burned INT UNSIGNED NOT NULL DEFAULT 0,
+    daily_kilojoules_consumed INT UNSIGNED NOT NULL DEFAULT 0,
+    daily_kilojoules_burned INT UNSIGNED NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id),
+    CONSTRAINT fk_user_tracking_user
+      FOREIGN KEY (user_id) REFERENCES users(id)
+      ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+`;
+
+const createUserTrackingHistoryTableStatement = `
+  CREATE TABLE IF NOT EXISTS user_tracking_history (
+    user_id CHAR(36) NOT NULL,
+    tracked_on DATE NOT NULL,
+    kilojoules_consumed INT UNSIGNED NOT NULL DEFAULT 0,
+    kilojoules_burned INT UNSIGNED NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, tracked_on),
+    CONSTRAINT fk_user_tracking_history_user
+      FOREIGN KEY (user_id) REFERENCES users(id)
+      ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+`;
+
 const createUserShoppingListTableStatement = `
   CREATE TABLE IF NOT EXISTS user_shopping_list (
     user_id CHAR(36) NOT NULL,
@@ -207,6 +242,16 @@ const ensureGoogleIdentityColumns = async (pool: Pool): Promise<void> => {
       `,
     );
   }
+};
+
+const ensureEnergyUnitPreferenceColumn = async (pool: Pool): Promise<void> => {
+  await ensureVarcharColumn(
+    pool,
+    "users",
+    "energy_unit_preference",
+    "VARCHAR(10) NOT NULL DEFAULT 'kj'",
+    "kind_of_diet",
+  );
 };
 
 const ensureWorkoutDayMetricColumns = async (pool: Pool): Promise<void> => {
@@ -441,6 +486,7 @@ export const initializeDatabaseSchema = async (
   pool: Pool = mysqlPool,
 ): Promise<void> => {
   await ensureGoogleIdentityColumns(pool);
+  await ensureEnergyUnitPreferenceColumn(pool);
   await ensureJsonColumn(pool, "supplementation", "favorite_foods");
   await ensureJsonColumn(pool, "diet_plan_summary", "kind_of_diet");
   await ensureJsonColumn(pool, "workout_plan_overview", "diet_plan_summary");
@@ -451,6 +497,8 @@ export const initializeDatabaseSchema = async (
   await ensureWorkoutDayMetricColumns(pool);
   await dropLegacyHeaderTables(pool);
   await pool.query(createUserProgressTrackingTableStatement);
+  await pool.query(createUserTrackingTableStatement);
+  await pool.query(createUserTrackingHistoryTableStatement);
   await pool.query(createUserShoppingListTableStatement);
   await ensureShoppingTrackingColumns(pool);
 };

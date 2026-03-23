@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+  <title>AI Shape logo</title>
+  <defs>
+    <linearGradient id="bg" x1="18" y1="16" x2="110" y2="112" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff7ea" />
+      <stop offset="1" stop-color="#efe5d1" />
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="112" height="112" rx="32" fill="url(#bg)" />
+  <rect x="8" y="8" width="112" height="112" rx="32" fill="none" stroke="#19372b" stroke-width="8" />
+  <path
+    d="M40 92 64 34 88 92"
+    fill="none"
+    stroke="#19372b"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="12"
+  />
+  <path d="M50 68h28" fill="none" stroke="#eb7449" stroke-linecap="round" stroke-width="10" />
+  <path
+    d="M28 96c16-18 35-28 56-28 8 0 15 1 22 4"
+    fill="none"
+    stroke="#bfd7a8"
+    stroke-linecap="round"
+    stroke-width="9"
+  />
+</svg>

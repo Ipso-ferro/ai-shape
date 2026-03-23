@@ -1,5 +1,6 @@
 export type ViewKey = "dashboard" | "diet" | "workout" | "shopping" | "settings";
 export type DietType = "recipes" | "single-food";
+export type EnergyUnit = "kj" | "cal";
 export type ProgressPeriod = "day" | "month" | "year";
 export type MealSlot =
   | "breakfast"
@@ -28,6 +29,7 @@ export interface UserProfile {
   favoriteFoods: string[];
   supplementation: string[];
   numberOfMeals: number;
+  energyUnitPreference: EnergyUnit;
   caloriesTarget: number;
   kilojoulesTarget: number;
   proteinTarget: number;
@@ -81,6 +83,7 @@ export interface ProfileDraft {
   favoriteFoods: string;
   supplementation: string;
   numberOfMeals: string;
+  energyUnitPreference: EnergyUnit;
   favorieteCoucineRecipes: string;
 }
 
@@ -222,6 +225,9 @@ export interface ProgressMealStatus {
   completedAt: string | null;
   calories: number;
   kilojoules: number;
+  proteinGrams: number;
+  carbsGrams: number;
+  fatsGrams: number;
 }
 
 export interface ProgressWorkoutStatus {
@@ -262,6 +268,11 @@ export interface ProgressDay {
     supplements: ProgressMealStatus;
   };
   workout: ProgressWorkoutStatus;
+  macroTotals: {
+    proteinGrams: number;
+    carbsGrams: number;
+    fatsGrams: number;
+  };
   totals: ProgressTotals;
 }
 

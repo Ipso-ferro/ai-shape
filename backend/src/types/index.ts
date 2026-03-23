@@ -3,6 +3,7 @@ import type { DataUserCommand } from "../../domain/user/command/DataUserCommand"
 export type { DataUserCommand };
 
 export type DietType = "recipes" | "single-food";
+export type EnergyUnit = "kj" | "cal";
 export type TrackableMealSlot =
   | "breakfast"
   | "snack1"
@@ -115,6 +116,9 @@ export interface UserProgressMealStatus {
   completedAt: string | null;
   calories: number;
   kilojoules: number;
+  proteinGrams: number;
+  carbsGrams: number;
+  fatsGrams: number;
 }
 
 export interface UserProgressWorkoutStatus {
@@ -155,6 +159,11 @@ export interface UserProgressDay {
     supplements: UserProgressMealStatus;
   };
   workout: UserProgressWorkoutStatus;
+  macroTotals: {
+    proteinGrams: number;
+    carbsGrams: number;
+    fatsGrams: number;
+  };
   totals: UserProgressTotals;
 }
 

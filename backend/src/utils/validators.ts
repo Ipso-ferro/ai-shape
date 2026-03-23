@@ -1,9 +1,15 @@
 import { ValidationError } from "../../domain/share/Errors/AppErrors";
-import { DataUserCommand, DietType } from "../types";
+import { DataUserCommand, DietType, EnergyUnit } from "../types";
 
 export const validateDietType = (dietType: DietType): void => {
   if (dietType !== "recipes" && dietType !== "single-food") {
     throw new ValidationError(`Unsupported diet type "${dietType}".`);
+  }
+};
+
+export const validateEnergyUnit = (energyUnit: EnergyUnit): void => {
+  if (energyUnit !== "kj" && energyUnit !== "cal") {
+    throw new ValidationError(`Unsupported energy unit "${energyUnit}".`);
   }
 };
 
@@ -44,6 +50,16 @@ export const validateUserData = (userData: DataUserCommand): void => {
     if (!Number.isFinite(value) || value <= 0) {
       missingFields.push(fieldName);
     }
+  }
+
+  if (userData.numberOfMeals < 1 || userData.numberOfMeals > 6) {
+    missingFields.push("numberOfMeals");
+  }
+
+  try {
+    validateEnergyUnit(userData.energyUnitPreference);
+  } catch {
+    missingFields.push("energyUnitPreference");
   }
 
   const requiredArrayFields: Array<[string, unknown[]]> = [

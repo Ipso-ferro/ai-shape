@@ -1,4 +1,4 @@
-import { DietType, MealSlot, ViewKey } from "./types";
+import { DietType, EnergyUnit, MealSlot, ViewKey } from "./types";
 
 export const storageKey = "ai-shape-session";
 
@@ -25,6 +25,11 @@ export const mealConfig: Array<{
 export const dietTypeOptions: Array<{ label: string; value: DietType }> = [
   { label: "Single Foods", value: "single-food" },
   { label: "Recipes", value: "recipes" },
+];
+
+export const energyUnitOptions: Array<{ label: string; value: EnergyUnit }> = [
+  { label: "Kilojoules (kJ)", value: "kj" },
+  { label: "Calories (kcal)", value: "cal" },
 ];
 
 export const profileOptions = {

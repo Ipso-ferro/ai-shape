@@ -21,6 +21,7 @@ import {
   DietPlanEntry,
   DietPlan,
   DietType,
+  EnergyUnit,
   ShoppingList,
   UserProgressDay,
   UserProgressMealStatus,
@@ -39,6 +40,7 @@ interface UserRow extends RowDataPacket {
   goal: string | null;
   diet: string | null;
   kind_of_diet: string | null;
+  energy_unit_preference: EnergyUnit | string | null;
   avoided_foods: string[] | string | null;
   allergies: string[] | string | null;
   level_activity: string | null;
@@ -141,6 +143,18 @@ interface UserShoppingListRow extends RowDataPacket {
   checked_items: string[] | string | null;
 }
 
+interface UserTrackingRow extends RowDataPacket {
+  user_id: string;
+  tracked_on: string | Date;
+  target_kilojoules: number | string;
+  protein_grams: number | string;
+  carbs_grams: number | string;
+  fats_grams: number | string;
+  daily_calories_burned: number | string;
+  daily_kilojoules_consumed: number | string;
+  daily_kilojoules_burned: number | string;
+}
+
 interface DatabaseError {
   code?: string;
   sqlMessage?: string;
@@ -157,6 +171,7 @@ const userSelect = `
     goal,
     diet,
     kind_of_diet,
+    energy_unit_preference,
     avoided_foods,
     allergies,
     level_activity,
@@ -341,6 +356,18 @@ const toSqlDateTime = (value: string | null): string | null => {
   return value.slice(0, 19).replace("T", " ");
 };
 
+const currentSummaryResetHour = 12;
+
+const resolveActiveTrackingDate = (now = new Date()): string => {
+  const cursor = new Date(now);
+
+  if (cursor.getHours() < currentSummaryResetHour) {
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
+  return toDateString(cursor);
+};
+
 const assertNonEmptyString = (value: string, fieldName: string): void => {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new ValidationError(`"${fieldName}" is required.`);
@@ -362,6 +389,12 @@ const assertStringArray = (value: string[], fieldName: string): void => {
 const assertBoolean = (value: boolean, fieldName: string): void => {
   if (typeof value !== "boolean") {
     throw new ValidationError(`"${fieldName}" must be a boolean.`);
+  }
+};
+
+const assertEnergyUnit = (value: string, fieldName: string): void => {
+  if (value !== "kj" && value !== "cal") {
+    throw new ValidationError(`"${fieldName}" must be either "kj" or "cal".`);
   }
 };
 
@@ -402,6 +435,10 @@ const assertSaveDataUserCommand = (
   assertNonEmptyString(dataUserCommand.trainLocation, "trainLocation");
   assertFiniteNumber(dataUserCommand.timeToTrain, "timeToTrain");
   assertFiniteNumber(dataUserCommand.numberOfMeals, "numberOfMeals");
+  if (dataUserCommand.numberOfMeals < 1 || dataUserCommand.numberOfMeals > 6) {
+    throw new ValidationError("\"numberOfMeals\" must be between 1 and 6.");
+  }
+  assertEnergyUnit(dataUserCommand.energyUnitPreference, "energyUnitPreference");
   assertFiniteNumber(dataUserCommand.caloriesTarget, "caloriesTarget");
   assertFiniteNumber(dataUserCommand.kilojoulesTarget, "kilojoulesTarget");
   assertFiniteNumber(dataUserCommand.proteinTarget, "proteinTarget");
@@ -464,6 +501,7 @@ const mapRowToDataUserCommand = (row: UserRow): DataUserCommand => ({
   goal: row.goal ?? "",
   diet: row.diet ?? "",
   kindOfDiet: row.kind_of_diet ?? "",
+  energyUnitPreference: row.energy_unit_preference === "cal" ? "cal" : "kj",
   avoidedFoods: toStringArray(row.avoided_foods),
   allergies: toStringArray(row.allergies),
   levelActivity: row.level_activity ?? "",
@@ -549,6 +587,9 @@ const mapProgressMealStatus = (
   completedAt: toDateTimeString(completedAt),
   calories: toNumber(calories),
   kilojoules: toNumber(kilojoules),
+  proteinGrams: 0,
+  carbsGrams: 0,
+  fatsGrams: 0,
 });
 
 const mapRowToUserProgressDay = (
@@ -599,6 +640,11 @@ const mapRowToUserProgressDay = (
     completedAt: toDateTimeString(row.workout_completed_at),
     caloriesBurned: toNumber(row.workout_calories_burned),
     kilojoulesBurned: toNumber(row.workout_kilojoules_burned),
+  },
+  macroTotals: {
+    proteinGrams: 0,
+    carbsGrams: 0,
+    fatsGrams: 0,
   },
   totals: {
     caloriesConsumed: toNumber(row.total_calories_consumed),
@@ -657,6 +703,112 @@ export class MySqlRepositoryUser implements RepositoryUser {
     }
   }
 
+  private async resetUserTrackingIfNeeded(userId: string): Promise<void> {
+    const activeTrackingDate = resolveActiveTrackingDate();
+    const [rows] = await this.pool.execute<UserTrackingRow[]>(
+      `
+        SELECT
+          user_id,
+          tracked_on,
+          target_kilojoules,
+          protein_grams,
+          carbs_grams,
+          fats_grams,
+          daily_calories_burned,
+          daily_kilojoules_consumed,
+          daily_kilojoules_burned
+        FROM user_tracking
+        WHERE user_id = ?
+        LIMIT 1
+      `,
+      [userId],
+    );
+
+    if (rows.length === 0) {
+      return;
+    }
+
+    const trackedOn = toDateString(rows[0].tracked_on);
+
+    if (trackedOn === activeTrackingDate) {
+      return;
+    }
+
+    await this.pool.execute<ResultSetHeader>(
+      `
+        DELETE FROM user_tracking
+        WHERE user_id = ?
+      `,
+      [userId],
+    );
+  }
+
+  private async syncTrackingSummaries(progressDay: UserProgressDay): Promise<void> {
+    await this.pool.execute<ResultSetHeader>(
+      `
+        INSERT INTO user_tracking_history (
+          user_id,
+          tracked_on,
+          kilojoules_consumed,
+          kilojoules_burned
+        )
+        VALUES (?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          kilojoules_consumed = VALUES(kilojoules_consumed),
+          kilojoules_burned = VALUES(kilojoules_burned)
+      `,
+      [
+        progressDay.userId,
+        progressDay.date,
+        progressDay.totals.kilojoulesConsumed,
+        progressDay.totals.kilojoulesBurned,
+      ],
+    );
+
+    const activeTrackingDate = resolveActiveTrackingDate();
+
+    if (progressDay.date !== activeTrackingDate) {
+      return;
+    }
+
+    await this.pool.execute<ResultSetHeader>(
+      `
+        INSERT INTO user_tracking (
+          user_id,
+          tracked_on,
+          target_kilojoules,
+          protein_grams,
+          carbs_grams,
+          fats_grams,
+          daily_calories_burned,
+          daily_kilojoules_consumed,
+          daily_kilojoules_burned
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          tracked_on = VALUES(tracked_on),
+          target_kilojoules = VALUES(target_kilojoules),
+          protein_grams = VALUES(protein_grams),
+          carbs_grams = VALUES(carbs_grams),
+          fats_grams = VALUES(fats_grams),
+          daily_calories_burned = VALUES(daily_calories_burned),
+          daily_kilojoules_consumed = VALUES(daily_kilojoules_consumed),
+          daily_kilojoules_burned = VALUES(daily_kilojoules_burned)
+      `,
+      [
+        progressDay.userId,
+        progressDay.date,
+        progressDay.targets.kilojoules,
+        progressDay.macroTotals.proteinGrams,
+        progressDay.macroTotals.carbsGrams,
+        progressDay.macroTotals.fatsGrams,
+        progressDay.totals.caloriesBurned,
+        progressDay.totals.kilojoulesConsumed,
+        progressDay.totals.kilojoulesBurned,
+      ],
+    );
+  }
+
   async addNewUser(user: CreateUserRecordCommand): Promise<void> {
     assertCreateUserRecordCommand(user);
 
@@ -699,6 +851,7 @@ export class MySqlRepositoryUser implements RepositoryUser {
             goal = ?,
             diet = ?,
             kind_of_diet = ?,
+            energy_unit_preference = ?,
             avoided_foods = ?,
             allergies = ?,
             level_activity = ?,
@@ -725,6 +878,7 @@ export class MySqlRepositoryUser implements RepositoryUser {
           dataUserCommand.goal,
           dataUserCommand.diet,
           dataUserCommand.kindOfDiet,
+          dataUserCommand.energyUnitPreference,
           JSON.stringify(dataUserCommand.avoidedFoods),
           JSON.stringify(dataUserCommand.allergies),
           dataUserCommand.levelActivity,
@@ -1250,6 +1404,7 @@ export class MySqlRepositoryUser implements RepositoryUser {
     assertUserProgressDay(progressDay);
 
     try {
+      await this.resetUserTrackingIfNeeded(progressDay.userId);
       await this.pool.execute<ResultSetHeader>(
         `
           INSERT INTO user_progress_tracking (
@@ -1370,6 +1525,8 @@ export class MySqlRepositoryUser implements RepositoryUser {
         ],
       );
 
+      await this.syncTrackingSummaries(progressDay);
+
       return progressDay;
     } catch (error) {
       return handleRepositoryError(error);
@@ -1381,6 +1538,7 @@ export class MySqlRepositoryUser implements RepositoryUser {
     assertNonEmptyString(date, "date");
 
     try {
+      await this.resetUserTrackingIfNeeded(userId);
       const [rows] = await this.pool.execute<UserProgressTrackingRow[]>(
         `
           SELECT
@@ -1445,6 +1603,7 @@ export class MySqlRepositoryUser implements RepositoryUser {
     assertNonEmptyString(endDate, "endDate");
 
     try {
+      await this.resetUserTrackingIfNeeded(userId);
       const [rows] = await this.pool.execute<UserProgressTrackingRow[]>(
         `
           SELECT
