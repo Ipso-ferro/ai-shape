@@ -4,7 +4,7 @@
   "main": "index.js",
   "scripts": {
     "test": "npm run build && node --test build/tests/**/*.test.js",
-    "server": "ts-node -r dotenv/config server/server.ts",
+    "server": "node -r dotenv/config build/server/server.js",
     "start": "node -r dotenv/config build/server/server.js",
     "build": "rm -rf build && npx tsc"
   },

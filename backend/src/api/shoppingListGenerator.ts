@@ -1,4 +1,5 @@
 import { createOpenAIClient, MODEL, SHOPPING_LIST_MAX_TOKENS } from "./client";
+import { isEmptyDietEntry } from "./dietPlanGenerationShared";
 import { SkillLoader } from "../utils/skillLoader";
 import {
   DietPlan,
@@ -64,6 +65,10 @@ const liquidKeywords = [
   "tea",
   "yogurt drink",
 ];
+
+const isShoppingRelevantDietEntry = (entry: DietPlan["days"][number]["breakfast"]): boolean => (
+  !isEmptyDietEntry(entry)
+);
 
 const extractQuantityValue = (value: number | string | undefined): number => {
   if (typeof value === "number") {
@@ -359,42 +364,20 @@ function buildShoppingPrompt(dietPlan: DietPlan, dietType: DietType): string {
     day: day.day,
     dayName: day.dayName,
     meals: [
-      {
-        name: "Breakfast",
-        object: day.breakfast.object,
-        description: day.breakfast.description,
-        quantity: `${day.breakfast.quantity} ${day.breakfast.quantityUnit}`,
-        ingredients: day.breakfast.ingredients,
-      },
-      {
-        name: "Snack 1",
-        object: day.snack1.object,
-        description: day.snack1.description,
-        quantity: `${day.snack1.quantity} ${day.snack1.quantityUnit}`,
-        ingredients: day.snack1.ingredients,
-      },
-      {
-        name: "Lunch",
-        object: day.lunch.object,
-        description: day.lunch.description,
-        quantity: `${day.lunch.quantity} ${day.lunch.quantityUnit}`,
-        ingredients: day.lunch.ingredients,
-      },
-      {
-        name: "Dinner",
-        object: day.dinner.object,
-        description: day.dinner.description,
-        quantity: `${day.dinner.quantity} ${day.dinner.quantityUnit}`,
-        ingredients: day.dinner.ingredients,
-      },
-      {
-        name: "Snack 2",
-        object: day.snack2.object,
-        description: day.snack2.description,
-        quantity: `${day.snack2.quantity} ${day.snack2.quantityUnit}`,
-        ingredients: day.snack2.ingredients,
-      },
-    ],
+      { name: "Breakfast", entry: day.breakfast },
+      { name: "Snack 1", entry: day.snack1 },
+      { name: "Lunch", entry: day.lunch },
+      { name: "Dinner", entry: day.dinner },
+      { name: "Snack 2", entry: day.snack2 },
+    ]
+      .filter((meal) => isShoppingRelevantDietEntry(meal.entry))
+      .map((meal) => ({
+        name: meal.name,
+        object: meal.entry.object,
+        description: meal.entry.description,
+        quantity: `${meal.entry.quantity} ${meal.entry.quantityUnit}`,
+        ingredients: meal.entry.ingredients,
+      })),
     supplements: day.supplements.map((supplement) => ({
       object: supplement.object,
       description: supplement.description,
@@ -502,7 +485,7 @@ export function generateBasicShoppingList(dietPlan: DietPlan): ShoppingList {
       day.dinner,
       day.snack2,
       ...day.supplements,
-    ].forEach((entry) => {
+    ].filter((entry) => isShoppingRelevantDietEntry(entry)).forEach((entry) => {
       entry.ingredients.forEach((ingredient) => {
         const current = aggregatedIngredients.get(ingredient.item);
         if (!current || current.unit !== ingredient.quantityUnit) {

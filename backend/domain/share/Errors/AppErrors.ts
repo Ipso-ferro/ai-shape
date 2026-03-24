@@ -1,4 +1,4 @@
-export class AppError extends Error {
+export class AppErrors extends Error {
   constructor(
     message: string,
     readonly statusCode: number
@@ -9,40 +9,26 @@ export class AppError extends Error {
   }
 }
 
-export class ValidationError extends AppError {
+export class ValidationError extends AppErrors {
   constructor(message: string) {
     super(message, 400);
   }
 }
 
-export class NotFoundError extends AppError {
+export class NotFoundError extends AppErrors {
   constructor(message: string) {
     super(message, 404);
   }
 }
 
-export class ConflictError extends AppError {
+export class ConflictError extends AppErrors {
   constructor(message: string) {
     super(message, 409);
   }
 }
 
-export class UnauthorizedError extends AppError {
-  constructor(message = "Unauthorized") {
-    super(message, 401);
-  }
-}
-
-export class ForbiddenError extends AppError {
-  constructor(message = "Forbidden") {
-    super(message, 403);
-  }
-}
-
-export class InfrastructureError extends AppError {
+export class InfrastructureError extends AppErrors {
   constructor(message = "Internal server error") {
     super(message, 500);
   }
 }
-
-export { AppError as AppErrors };

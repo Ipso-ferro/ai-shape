@@ -1,9 +1,14 @@
 import {
+  applyMealCountToDietPlan,
+  applyMealCountToDietPlanDay,
+  buildMealCountPromptGuidance,
   buildDietPlanDaySchema,
   buildDietPlanSummary,
   JsonSchema,
   executeDietPlanGeneration,
   calculateDietContext,
+  ensureDietPlanDayMatchesMealCount,
+  ensureDietPlanMatchesMealCount,
   validateDietPlanDay,
 } from "./dietPlanGenerationShared";
 import { createOpenAIClient, MODEL, DIET_PLAN_MAX_TOKENS } from "./client";
@@ -30,7 +35,7 @@ export async function generateRecipePlan(
   options: { strictMode?: boolean } = {},
 ): Promise<ApiResponse<DietPlan>> {
   try {
-    return await executeDietPlanGeneration(userData, "recipes", [
+    const result = await executeDietPlanGeneration(userData, "recipes", [
       {
         label: "recipe-default",
         prompt: buildRecipePrompt(userData, {
@@ -49,7 +54,13 @@ export async function generateRecipePlan(
       },
     ], {
       systemPrompt: SkillLoader.load("recipe-nutritionist"),
+      validatePlan: (dietPlan) => ensureDietPlanMatchesMealCount(dietPlan, userData.numberOfMeals),
     });
+
+    return {
+      ...result,
+      data: applyMealCountToDietPlan(result.data, userData.numberOfMeals),
+    };
   } catch (error) {
     if (!shouldFallbackToDailyGeneration(error)) {
       throw error;
@@ -62,7 +73,7 @@ export async function generateRecipePlan(
 export async function generateFallbackRecipePlan(
   userData: DataUserCommand,
 ): Promise<ApiResponse<DietPlan>> {
-  return executeDietPlanGeneration(userData, "recipes", [
+  const result = await executeDietPlanGeneration(userData, "recipes", [
     {
       label: "recipe-fallback",
       prompt: buildRecipePrompt(userData, {
@@ -73,7 +84,13 @@ export async function generateFallbackRecipePlan(
     },
   ], {
     systemPrompt: SkillLoader.load("recipe-nutritionist"),
+    validatePlan: (dietPlan) => ensureDietPlanMatchesMealCount(dietPlan, userData.numberOfMeals),
   });
+
+  return {
+    ...result,
+    data: applyMealCountToDietPlan(result.data, userData.numberOfMeals),
+  };
 }
 
 function buildRecipePrompt(
@@ -125,11 +142,12 @@ PLAN TYPE:
 ${context.mealStructure}
 
 RECIPE RULES:
-- Every breakfast, snack, lunch, and dinner must be a real recipe dish, not a plain food list.
+- Every active meal slot must be a real recipe dish, not a plain food list.
 - Each meal must have a real recipe name, not just ingredient names.
 - Each meal must include at least 3 ingredients.
 - Each meal must include instructions and preparationTimeMinutes.
 - quantityUnit should prefer "g" or "ml".
+${buildMealCountPromptGuidance(userData.numberOfMeals)}
 ${options.strictMode ? "- STRICT: if any meal looks like single foods, rewrite it as a proper recipe dish." : ""}
 ${compactRules}
 
@@ -173,7 +191,9 @@ async function generateRecipePlanByDay(
     }
 
     const parsed = JSON.parse(content) as { day?: unknown };
-    days.push(validateDietPlanDay(parsed.day, "recipes"));
+    const day = validateDietPlanDay(parsed.day, "recipes");
+    ensureDietPlanDayMatchesMealCount(day, userData.numberOfMeals);
+    days.push(applyMealCountToDietPlanDay(day, userData.numberOfMeals));
   }
 
   return {
@@ -229,11 +249,12 @@ TARGETS:
 
 RULES:
 - Return exactly one day object for ${dayName}.
-- Every meal must be a real recipe dish.
+- Every active meal slot must be a real recipe dish.
 - Every meal must include at least 3 ingredients.
 - Every meal must include 2 or 3 short instructions.
 - Keep descriptions concise.
 - Keep supplements as [] unless clearly needed.
+${buildMealCountPromptGuidance(userData.numberOfMeals)}
 
 Return only valid JSON that matches the provided response schema exactly.`;
 }

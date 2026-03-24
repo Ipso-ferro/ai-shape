@@ -1,9 +1,14 @@
 import {
+  applyMealCountToDietPlan,
+  applyMealCountToDietPlanDay,
+  buildMealCountPromptGuidance,
   buildDietPlanDaySchema,
   buildDietPlanSummary,
   JsonSchema,
   executeDietPlanGeneration,
   calculateDietContext,
+  ensureDietPlanDayMatchesMealCount,
+  ensureDietPlanMatchesMealCount,
   validateDietPlanDay,
 } from "./dietPlanGenerationShared";
 import { createOpenAIClient, MODEL, DIET_PLAN_MAX_TOKENS } from "./client";
@@ -25,11 +30,13 @@ const singleFoodDayNames = [
   "Sunday",
 ];
 
+const missingSingleFoodSupplementError = "Required supplements were omitted from the single-food diet plan.";
+
 export async function generateSingleFoodPlan(
   userData: DataUserCommand,
 ): Promise<ApiResponse<DietPlan>> {
   try {
-    return await executeDietPlanGeneration(userData, "single-food", [
+    const result = await executeDietPlanGeneration(userData, "single-food", [
       {
         label: "single-food-default",
         prompt: buildSingleFoodPrompt(userData, false),
@@ -42,7 +49,16 @@ export async function generateSingleFoodPlan(
       },
     ], {
       systemPrompt: SkillLoader.load("single-food-nutritionist"),
+      validatePlan: (dietPlan) => {
+        ensureDietPlanMatchesMealCount(dietPlan, userData.numberOfMeals);
+        ensureSingleFoodPlanSupplements(dietPlan, userData);
+      },
     });
+
+    return {
+      ...result,
+      data: applyMealCountToDietPlan(result.data, userData.numberOfMeals),
+    };
   } catch (error) {
     if (!shouldFallbackToDailyGeneration(error)) {
       throw error;
@@ -55,7 +71,7 @@ export async function generateSingleFoodPlan(
 export async function generateFallbackSingleFoodPlan(
   userData: DataUserCommand,
 ): Promise<ApiResponse<DietPlan>> {
-  return executeDietPlanGeneration(userData, "single-food", [
+  const result = await executeDietPlanGeneration(userData, "single-food", [
     {
       label: "single-food-fallback",
       prompt: buildSingleFoodPrompt(userData, true),
@@ -63,20 +79,28 @@ export async function generateFallbackSingleFoodPlan(
     },
   ], {
     systemPrompt: SkillLoader.load("single-food-nutritionist"),
+    validatePlan: (dietPlan) => {
+      ensureDietPlanMatchesMealCount(dietPlan, userData.numberOfMeals);
+      ensureSingleFoodPlanSupplements(dietPlan, userData);
+    },
   });
+
+  return {
+    ...result,
+    data: applyMealCountToDietPlan(result.data, userData.numberOfMeals),
+  };
 }
 
-function buildSingleFoodPrompt(
+export function buildSingleFoodPrompt(
   userData: DataUserCommand,
   compactMode: boolean,
 ): string {
   const context = calculateDietContext(userData, "single-food");
+  const configuredSupplements = getConfiguredSupplements(userData);
   const descriptionRule = compactMode
     ? "- Keep every description to 8 words or fewer."
     : "- Keep every description short and practical.";
-  const supplementRule = compactMode
-    ? "- Use an empty supplements array unless the user explicitly listed supplements."
-    : "- Supplements can be empty or simple non-recipe entries.";
+  const supplementRule = buildSingleFoodSupplementRule(userData, compactMode);
 
   return `Create a personalized 7-day single-food diet plan.
 
@@ -100,19 +124,20 @@ DIETARY SPECIFICATIONS:
 - Avoid: ${userData.avoidedFoods.join(", ") || "None specified"}
 - Allergies: ${userData.allergies.join(", ") || "None"}
 - Favorite foods: ${userData.favoriteFoods.join(", ") || "None specified"}
-- Current supplementation: ${userData.supplementation.join(", ") || "None specified"}
+- Current supplementation: ${configuredSupplements.join(", ") || "None specified"}
 
 PLAN TYPE:
 ${context.mealStructure}
 
 SINGLE-FOOD RULES:
 - Do not generate chef-style recipes or cooking workflows.
-- Each meal slot must be a complete meal built from plain foods with exact quantities.
+- Each active meal slot must be a complete meal built from plain foods with exact quantities.
 - Use foods like eggs, oats, yogurt, fruit, rice, chicken, vegetables, wraps, salads, milk, coffee.
 - Do not include recipe steps.
 - Do not include preparationTimeMinutes.
 ${descriptionRule}
 ${supplementRule}
+${buildMealCountPromptGuidance(userData.numberOfMeals)}
 
 Return only valid JSON that matches the provided response schema exactly.
 Do not add markdown, comments, extra keys, or explanatory text.`;
@@ -154,7 +179,10 @@ async function generateSingleFoodPlanByDay(
     }
 
     const parsed = JSON.parse(content) as { day?: unknown };
-    days.push(validateDietPlanDay(parsed.day, "single-food"));
+    const day = validateDietPlanDay(parsed.day, "single-food");
+    ensureDietPlanDayMatchesMealCount(day, userData.numberOfMeals);
+    ensureSingleFoodDaySupplements(day, userData);
+    days.push(applyMealCountToDietPlanDay(day, userData.numberOfMeals));
   }
 
   return {
@@ -183,12 +211,13 @@ function buildSingleFoodDayResponseSchema(): JsonSchema {
   };
 }
 
-function buildSingleFoodDayPrompt(
+export function buildSingleFoodDayPrompt(
   userData: DataUserCommand,
   dayNumber: number,
   dayName: string,
 ): string {
   const context = calculateDietContext(userData, "single-food");
+  const configuredSupplements = getConfiguredSupplements(userData);
 
   return `Create only day ${dayNumber} (${dayName}) of a single-food diet plan.
 
@@ -206,6 +235,7 @@ TARGETS:
 - Protein: ${context.proteinTarget}g
 - Carbs: ${context.carbsTarget}g
 - Fats: ${context.fatsTarget}g
+- Current supplementation: ${configuredSupplements.join(", ") || "None specified"}
 
 RULES:
 - Return exactly one day object for ${dayName}.
@@ -213,7 +243,8 @@ RULES:
 - Do not include cooking instructions.
 - Do not include preparationTimeMinutes.
 - Keep descriptions concise.
-- Keep supplements as [] unless clearly needed.
+- ${buildSingleFoodDailySupplementRule(userData)}
+${buildMealCountPromptGuidance(userData.numberOfMeals)}
 
 Return only valid JSON that matches the provided response schema exactly.`;
 }
@@ -221,5 +252,69 @@ Return only valid JSON that matches the provided response schema exactly.`;
 function shouldFallbackToDailyGeneration(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes("Incomplete JSON response from API")
-    || message.includes("could not parse the JSON body of your request");
+    || message.includes("could not parse the JSON body of your request")
+    || message.includes(missingSingleFoodSupplementError);
+}
+
+function buildSingleFoodSupplementRule(
+  userData: DataUserCommand,
+  compactMode: boolean,
+): string {
+  if (!hasConfiguredSupplements(userData)) {
+    return "- Use an empty supplements array.";
+  }
+
+  return compactMode
+    ? "- For every day, include each listed supplement exactly once in supplements with exact quantity and quantityUnit."
+    : "- For every day, include the user's listed supplements in supplements as simple supplement entries with exact quantity and quantityUnit. Do not leave supplements empty.";
+}
+
+function buildSingleFoodDailySupplementRule(userData: DataUserCommand): string {
+  if (!hasConfiguredSupplements(userData)) {
+    return "Use an empty supplements array.";
+  }
+
+  return `Include each listed supplement exactly once in supplements for ${userData.name}: ${getConfiguredSupplements(userData).join(", ")}.`;
+}
+
+function hasConfiguredSupplements(userData: DataUserCommand): boolean {
+  return getConfiguredSupplements(userData).length > 0;
+}
+
+function getConfiguredSupplements(userData: DataUserCommand): string[] {
+  return userData.supplementation
+    .map((item: string) => item.trim())
+    .filter(Boolean);
+}
+
+function ensureSingleFoodPlanSupplements(
+  dietPlan: DietPlan,
+  userData: DataUserCommand,
+): void {
+  for (const day of dietPlan.days) {
+    ensureSingleFoodDaySupplements(day, userData);
+  }
+}
+
+function ensureSingleFoodDaySupplements(
+  day: DietPlanDay,
+  userData: DataUserCommand,
+): void {
+  if (!hasConfiguredSupplements(userData)) {
+    return;
+  }
+
+  const normalizedEntries = day.supplements.map((entry) => [
+    entry.object,
+    ...entry.ingredients.map((ingredient) => ingredient.item),
+  ].join(" ").toLowerCase());
+
+  const missingSupplements = getConfiguredSupplements(userData)
+    .filter((supplement) => (
+      !normalizedEntries.some((entryText) => entryText.includes(supplement.toLowerCase()))
+    ));
+
+  if (missingSupplements.length > 0) {
+    throw new Error(missingSingleFoodSupplementError);
+  }
 }

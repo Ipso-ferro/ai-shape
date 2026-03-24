@@ -10,7 +10,7 @@ import {
 } from "../types";
 
 export type JsonSchema = {
-  type: string;
+  type?: string;
   properties?: Record<string, JsonSchema>;
   items?: JsonSchema;
   required?: string[];
@@ -18,6 +18,8 @@ export type JsonSchema = {
   minItems?: number;
   maxItems?: number;
   minimum?: number;
+  enum?: Array<string | number | boolean | null>;
+  anyOf?: JsonSchema[];
 };
 
 export interface DietGenerationAttempt {
@@ -56,9 +58,42 @@ interface DietGenerationDependencies {
     };
   };
   systemPrompt: string;
+  validatePlan?: (dietPlan: DietPlan) => void;
 }
 
 type DietEntryKind = "recipe-meal" | "single-food-meal" | "supplement";
+type DietMealSlot = "breakfast" | "snack1" | "lunch" | "dinner" | "snack2";
+
+const dietMealSlots: DietMealSlot[] = [
+  "breakfast",
+  "snack1",
+  "lunch",
+  "dinner",
+  "snack2",
+];
+
+const dietMealSlotLabels: Record<DietMealSlot, string> = {
+  breakfast: "Breakfast",
+  snack1: "Snack 1",
+  lunch: "Lunch",
+  dinner: "Dinner",
+  snack2: "Snack 2",
+};
+
+export const createEmptyDietEntry = (): DietPlanEntry => ({
+  object: "",
+  description: "",
+  quantity: 0,
+  quantityUnit: "",
+  ingredients: [],
+  macros: {
+    protein: "0g",
+    carbs: "0g",
+    fats: "0g",
+  },
+  calories: 0,
+  kilojoules: 0,
+});
 
 const macroSchema: JsonSchema = {
   type: "object",
@@ -66,6 +101,17 @@ const macroSchema: JsonSchema = {
     protein: { type: "string" },
     carbs: { type: "string" },
     fats: { type: "string" },
+  },
+  required: ["protein", "carbs", "fats"],
+  additionalProperties: false,
+};
+
+const emptyMacroSchema: JsonSchema = {
+  type: "object",
+  properties: {
+    protein: { type: "string", enum: ["0g"] },
+    carbs: { type: "string", enum: ["0g"] },
+    fats: { type: "string", enum: ["0g"] },
   },
   required: ["protein", "carbs", "fats"],
   additionalProperties: false,
@@ -114,6 +160,35 @@ const singleFoodMealSchema: JsonSchema = {
   ...supplementSchema,
 };
 
+const emptyMealSchema: JsonSchema = {
+  type: "object",
+  properties: {
+    object: { type: "string", enum: [""] },
+    description: { type: "string", enum: [""] },
+    quantity: { type: "number", enum: [0] },
+    quantityUnit: { type: "string", enum: [""] },
+    ingredients: {
+      type: "array",
+      items: ingredientSchema,
+      maxItems: 0,
+    },
+    macros: emptyMacroSchema,
+    calories: { type: "number", enum: [0] },
+    kilojoules: { type: "number", enum: [0] },
+  },
+  required: [
+    "object",
+    "description",
+    "quantity",
+    "quantityUnit",
+    "ingredients",
+    "macros",
+    "calories",
+    "kilojoules",
+  ],
+  additionalProperties: false,
+};
+
 const recipeMealSchema: JsonSchema = {
   type: "object",
   properties: {
@@ -157,8 +232,8 @@ const recipeMealSchema: JsonSchema = {
 
 const buildDaySchema = (dietType: DietType): JsonSchema => {
   const mealSchema = dietType === "recipes"
-    ? recipeMealSchema
-    : singleFoodMealSchema;
+    ? { anyOf: [recipeMealSchema, emptyMealSchema] }
+    : { anyOf: [singleFoodMealSchema, emptyMealSchema] };
 
   return {
     type: "object",
@@ -192,6 +267,109 @@ const buildDaySchema = (dietType: DietType): JsonSchema => {
 export const buildDietPlanDaySchema = (dietType: DietType): JsonSchema => (
   buildDaySchema(dietType)
 );
+
+export const resolveActiveDietMealSlots = (
+  numberOfMeals: number,
+): DietMealSlot[] => {
+  const normalizedMealCount = Number.isFinite(numberOfMeals)
+    ? Math.max(1, Math.min(5, Math.round(numberOfMeals)))
+    : 3;
+
+  switch (normalizedMealCount) {
+    case 1:
+      return ["lunch"];
+    case 2:
+      return ["lunch", "dinner"];
+    case 3:
+      return ["breakfast", "lunch", "dinner"];
+    case 4:
+      return ["breakfast", "snack1", "lunch", "dinner"];
+    default:
+      return [...dietMealSlots];
+  }
+};
+
+const resolveInactiveDietMealSlots = (numberOfMeals: number): DietMealSlot[] => {
+  const activeSlots = new Set(resolveActiveDietMealSlots(numberOfMeals));
+  return dietMealSlots.filter((slot) => !activeSlots.has(slot));
+};
+
+export const isEmptyDietEntry = (entry: DietPlanEntry): boolean => (
+  entry.object.trim().length === 0
+  && entry.description.trim().length === 0
+  && entry.quantity === 0
+  && entry.ingredients.length === 0
+  && entry.calories === 0
+  && entry.kilojoules === 0
+  && entry.macros.protein === "0g"
+  && entry.macros.carbs === "0g"
+  && entry.macros.fats === "0g"
+);
+
+export const buildMealCountPromptGuidance = (numberOfMeals: number): string => {
+  const activeMealLabels = resolveActiveDietMealSlots(numberOfMeals)
+    .map((slot) => dietMealSlotLabels[slot])
+    .join(", ");
+  const inactiveMealLabels = resolveInactiveDietMealSlots(numberOfMeals)
+    .map((slot) => dietMealSlotLabels[slot]);
+
+  if (inactiveMealLabels.length === 0) {
+    return `- The user requested ${Math.max(1, Math.min(5, Math.round(numberOfMeals) || 5))} meals per day, so use all meal slots: ${activeMealLabels}.`;
+  }
+
+  return `- The user requested ${Math.max(1, Math.min(5, Math.round(numberOfMeals) || 3))} meals per day.
+- Only these meal slots may contain real meals: ${activeMealLabels}.
+- For inactive meal slots (${inactiveMealLabels.join(", ")}), return this exact empty placeholder object: ${JSON.stringify(createEmptyDietEntry())}`;
+};
+
+export const ensureDietPlanMatchesMealCount = (
+  dietPlan: DietPlan,
+  numberOfMeals: number,
+): void => {
+  for (const day of dietPlan.days) {
+    ensureDietPlanDayMatchesMealCount(day, numberOfMeals);
+  }
+};
+
+export const ensureDietPlanDayMatchesMealCount = (
+  day: DietPlanDay,
+  numberOfMeals: number,
+): void => {
+  const activeSlots = resolveActiveDietMealSlots(numberOfMeals);
+  const missingActiveSlots = activeSlots.filter((slot) => isEmptyDietEntry(day[slot]));
+
+  if (missingActiveSlots.length > 0) {
+    throw new Error(
+      `Diet plan is missing required meals for slots: ${missingActiveSlots
+        .map((slot) => dietMealSlotLabels[slot])
+        .join(", ")}.`,
+    );
+  }
+};
+
+export const applyMealCountToDietPlan = (
+  dietPlan: DietPlan,
+  numberOfMeals: number,
+): DietPlan => ({
+  ...dietPlan,
+  days: dietPlan.days.map((day) => applyMealCountToDietPlanDay(day, numberOfMeals)),
+});
+
+export const applyMealCountToDietPlanDay = (
+  day: DietPlanDay,
+  numberOfMeals: number,
+): DietPlanDay => {
+  const activeSlots = new Set(resolveActiveDietMealSlots(numberOfMeals));
+
+  return {
+    ...day,
+    breakfast: activeSlots.has("breakfast") ? day.breakfast : createEmptyDietEntry(),
+    snack1: activeSlots.has("snack1") ? day.snack1 : createEmptyDietEntry(),
+    lunch: activeSlots.has("lunch") ? day.lunch : createEmptyDietEntry(),
+    dinner: activeSlots.has("dinner") ? day.dinner : createEmptyDietEntry(),
+    snack2: activeSlots.has("snack2") ? day.snack2 : createEmptyDietEntry(),
+  };
+};
 
 const buildDietPlanResponseSchema = (dietType: DietType): JsonSchema => ({
   type: "object",
@@ -356,6 +534,7 @@ export async function executeDietPlanGeneration(
 
       const response = parseResponseContent(responseContent);
       const dietPlan = validateDietPlanResponse(response, dietType);
+      dependencies.validatePlan?.(dietPlan);
 
       return {
         success: true,
@@ -381,8 +560,8 @@ export function calculateDietContext(
     : "International variety";
 
   const mealStructure = dietType === "single-food"
-    ? "SIMPLE MEALS FROM SINGLE FOODS - Each meal slot must contain a full meal made from plain foods with exact quantities, short description, macros, calories, and kilojoules, but not recipe-style preparation."
-    : `RECIPE-BASED - Each meal slot must contain one recipe object with total quantity, quantityUnit (prefer g or ml), an ingredients array with exact per-ingredient quantities, a concise description, cuisine influence (${cuisineOptions}), clear preparation instructions, preparationTimeMinutes, macros, calories, and kilojoules.`;
+    ? "SIMPLE MEALS FROM SINGLE FOODS - Each active meal slot must contain a full meal made from plain foods with exact quantities, short description, macros, calories, and kilojoules, but not recipe-style preparation. Inactive meal slots must stay empty."
+    : `RECIPE-BASED - Each active meal slot must contain one recipe object with total quantity, quantityUnit (prefer g or ml), an ingredients array with exact per-ingredient quantities, a concise description, cuisine influence (${cuisineOptions}), clear preparation instructions, preparationTimeMinutes, macros, calories, and kilojoules. Inactive meal slots must stay empty.`;
 
   return {
     targetCalories: userData.caloriesTarget,
@@ -502,6 +681,11 @@ function isValidDietEntry(
 
   if (!hasBaseShape) {
     return false;
+  }
+
+  if (entryKind !== "supplement" && isEmptyDietEntry(candidate as DietPlanEntry)) {
+    return candidate.instructions === undefined
+      && candidate.preparationTimeMinutes === undefined;
   }
 
   if (entryKind === "supplement") {

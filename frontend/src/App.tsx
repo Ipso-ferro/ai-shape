@@ -118,6 +118,29 @@ const formatEnergyValue = (kilojoules: number, energyUnit: EnergyUnit): string =
   `${formatNumber(energyUnit === "cal" ? toCalories(kilojoules) : kilojoules)} ${getEnergyUnitLabel(energyUnit)}`
 );
 
+const isEmptyDietEntry = (entry: DietPlanEntry): boolean => (
+  entry.object.trim().length === 0
+  && entry.description.trim().length === 0
+  && entry.quantity === 0
+  && entry.quantityUnit.trim().length === 0
+  && entry.ingredients.length === 0
+  && entry.calories === 0
+  && entry.kilojoules === 0
+  && entry.macros.protein === "0g"
+  && entry.macros.carbs === "0g"
+  && entry.macros.fats === "0g"
+);
+
+const getRenderableMealConfig = (day: DietPlanDay): typeof mealConfig => (
+  mealConfig.filter((meal) => {
+    if (meal.slot === "supplements") {
+      return day.supplements.length > 0;
+    }
+
+    return !isEmptyDietEntry(day[meal.slot] as DietPlanEntry);
+  })
+);
+
 const splitList = (value: string): string[] => value
   .split(",")
   .map((item) => item.trim())
@@ -1869,6 +1892,7 @@ function DietView(props: {
 
   const activeDay = plan.days.find((day) => day.day === props.selectedDay) ?? plan.days[0];
   const activeDate = props.weekDays.find((item) => item.dayNumber === activeDay.day)?.date ?? todayKey();
+  const visibleMeals = getRenderableMealConfig(activeDay);
 
   return (
     <div className="stack-page">
@@ -1916,7 +1940,7 @@ function DietView(props: {
       </section>
 
       <section className="meals-grid">
-        {mealConfig.map((meal) => {
+        {visibleMeals.map((meal) => {
           const entries = meal.slot === "supplements"
             ? activeDay.supplements
             : [(activeDay[meal.slot] as DietPlanEntry)];
