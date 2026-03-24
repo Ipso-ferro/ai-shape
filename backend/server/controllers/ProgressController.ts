@@ -73,6 +73,16 @@ export class ProgressController {
         mealSlot: req.params.mealSlot,
         date: req.body?.date ?? getDefaultDate(),
         completed: resolveCompleted(req.body?.completed),
+        dietType: req.body?.dietType === "single-food"
+          ? "single-food"
+          : req.body?.dietType === "recipes"
+            ? "recipes"
+            : undefined,
+        week: req.body?.week === "next"
+          ? "next"
+          : req.body?.week === "current"
+            ? "current"
+            : undefined,
       });
       res.status(200).json(result);
     } catch (error) {

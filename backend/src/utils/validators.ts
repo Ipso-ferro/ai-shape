@@ -1,5 +1,10 @@
 import { ValidationError } from "../../domain/share/Errors/AppErrors";
-import { DataUserCommand, DietType, EnergyUnit } from "../types";
+import {
+  DataUserCommand,
+  DietType,
+  EnergyUnit,
+  PlanWeek,
+} from "../types";
 
 export const validateDietType = (dietType: DietType): void => {
   if (dietType !== "recipes" && dietType !== "single-food") {
@@ -10,6 +15,12 @@ export const validateDietType = (dietType: DietType): void => {
 export const validateEnergyUnit = (energyUnit: EnergyUnit): void => {
   if (energyUnit !== "kj" && energyUnit !== "cal") {
     throw new ValidationError(`Unsupported energy unit "${energyUnit}".`);
+  }
+};
+
+export const validatePlanWeek = (week: PlanWeek): void => {
+  if (week !== "current" && week !== "next") {
+    throw new ValidationError(`Unsupported plan week "${week}".`);
   }
 };
 

@@ -21,6 +21,7 @@ import {
   Target04,
   Zap,
 } from "@untitledui/icons";
+import { DotLottieReact } from "@lottiefiles/dotlottie-react";
 import { gsap } from "gsap";
 import { api, ApiError } from "./api";
 import {
@@ -31,17 +32,19 @@ import {
   storageKey,
   viewLabels,
 } from "./constants";
-import { formatNumber, getCurrentWeek, humanDate, todayKey } from "./date";
+import { formatNumber, getCurrentWeek, humanDate, isSunday, monthKey, todayKey } from "./date";
 import type {
   AuthAccount,
   AuthSession,
   CompletePlanResult,
   DietPlan,
   DietPlanDay,
+  DietPlanDayMealState,
   DietPlanEntry,
   DietType,
   EnergyUnit,
   MealSlot,
+  PlanWeek,
   ProfileDraft,
   ProgressDay,
   ProgressSummary,
@@ -58,6 +61,22 @@ import type {
 const mealsPerDayMin = 1;
 const mealsPerDayMax = 6;
 const kilojoulesPerCalorie = 4.184;
+const planWeeks: PlanWeek[] = ["current", "next"];
+const dietModes: DietType[] = ["single-food", "recipes"];
+const workoutRefreshStoragePrefix = "ai-shape-workout-refresh";
+const generationStoragePrefix = "ai-shape-generation";
+const generationStatusTtlMs = 1000 * 60 * 30;
+
+type SectionGenerationKind = "diet" | "workout";
+type SectionGenerationSource = "redo-plan" | "diet-mode" | "redo-workout" | "auto-workout";
+
+interface SectionGenerationStatus {
+  source: SectionGenerationSource;
+  title: string;
+  message: string;
+  startedAt: string;
+  dietType?: DietType;
+}
 
 const emptyDraft: ProfileDraft = {
   name: "",
@@ -103,6 +122,99 @@ const splitList = (value: string): string[] => value
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean);
+
+const buildWorkoutRefreshStorageKey = (userId: string): string => (
+  `${workoutRefreshStoragePrefix}:${userId}`
+);
+
+const buildGenerationStorageKey = (
+  userId: string,
+  kind: SectionGenerationKind,
+): string => `${generationStoragePrefix}:${kind}:${userId}`;
+
+const isSectionGenerationStatus = (value: unknown): value is SectionGenerationStatus => {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+
+  return (
+    typeof candidate.source === "string"
+    && typeof candidate.title === "string"
+    && typeof candidate.message === "string"
+    && typeof candidate.startedAt === "string"
+    && (candidate.dietType === undefined || candidate.dietType === "single-food" || candidate.dietType === "recipes")
+  );
+};
+
+const readStoredGenerationStatus = (
+  userId: string,
+  kind: SectionGenerationKind,
+): SectionGenerationStatus | null => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const value = window.localStorage.getItem(buildGenerationStorageKey(userId, kind));
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!isSectionGenerationStatus(parsed)) {
+      window.localStorage.removeItem(buildGenerationStorageKey(userId, kind));
+      return null;
+    }
+
+    const startedAtTime = new Date(parsed.startedAt).getTime();
+    if (Number.isNaN(startedAtTime) || (Date.now() - startedAtTime) > generationStatusTtlMs) {
+      window.localStorage.removeItem(buildGenerationStorageKey(userId, kind));
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    window.localStorage.removeItem(buildGenerationStorageKey(userId, kind));
+    return null;
+  }
+};
+
+const persistGenerationStatus = (
+  userId: string,
+  kind: SectionGenerationKind,
+  status: SectionGenerationStatus | null,
+): void => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const storageKey = buildGenerationStorageKey(userId, kind);
+
+  if (!status) {
+    window.localStorage.removeItem(storageKey);
+    return;
+  }
+
+  window.localStorage.setItem(storageKey, JSON.stringify(status));
+};
+
+const shouldAutoRefreshWorkout = (userId: string, referenceDate = new Date()): boolean => {
+  if (typeof window === "undefined" || !isSunday(referenceDate)) {
+    return false;
+  }
+
+  return window.localStorage.getItem(buildWorkoutRefreshStorageKey(userId)) !== monthKey(referenceDate);
+};
+
+const markWorkoutRefreshMonth = (userId: string, referenceDate = new Date()): void => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(buildWorkoutRefreshStorageKey(userId), monthKey(referenceDate));
+};
 
 const isProfileReady = (user: UserProfile): boolean => (
   user.name.trim().length > 0
@@ -186,6 +298,79 @@ const dayDateMap = (weekDays: WeekDay[]): Record<number, string> => (
 );
 
 const firstOrEmpty = (list: string[]): string => list[0] ?? "No notes yet";
+
+const resolveCurrentDietType = (user: UserProfile | null): DietType => (
+  user?.kindOfDiet === "recipes" ? "recipes" : "single-food"
+);
+
+const createEmptyDietPlans = (): Record<DietType, DietPlan | null> => ({
+  "single-food": null,
+  recipes: null,
+});
+
+const createEmptyDietMealState = (): DietPlanDayMealState => ({
+  breakfast: false,
+  snack1: false,
+  lunch: false,
+  dinner: false,
+  snack2: false,
+  supplements: false,
+});
+
+const withDietMealStateDefaults = (plan: DietPlan): DietPlan => ({
+  ...plan,
+  days: plan.days.map((day) => ({
+    ...day,
+    eatenMeals: {
+      ...createEmptyDietMealState(),
+      ...day.eatenMeals,
+    },
+  })),
+});
+
+const patchDietPlansMealState = (
+  dietPlans: Record<DietType, DietPlan | null>,
+  dietType: DietType,
+  dayNumber: number,
+  mealSlot: MealSlot,
+  completed: boolean,
+): Record<DietType, DietPlan | null> => {
+  const plan = dietPlans[dietType];
+
+  if (!plan) {
+    return dietPlans;
+  }
+
+  return {
+    ...dietPlans,
+    [dietType]: {
+      ...plan,
+      days: plan.days.map((day) => (
+        day.day === dayNumber
+          ? {
+            ...day,
+            eatenMeals: {
+              ...createEmptyDietMealState(),
+              ...day.eatenMeals,
+              [mealSlot]: completed,
+            },
+          }
+          : day
+      )),
+    },
+  };
+};
+
+const createEmptyShoppingLists = (): Record<PlanWeek, Record<DietType, ShoppingList | null>> => ({
+  current: {
+    "single-food": null,
+    recipes: null,
+  },
+  next: {
+    "single-food": null,
+    recipes: null,
+  },
+});
 
 const parseStoredSession = (value: string | null): StoredSession | null => {
   if (!value) {
@@ -294,15 +479,18 @@ function App() {
   const [sessionExpiresAt, setSessionExpiresAt] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<ViewKey>("dashboard");
   const [user, setUser] = useState<UserProfile | null>(null);
-  const [dietPlan, setDietPlan] = useState<DietPlan | null>(null);
+  const [dietPlans, setDietPlans] = useState<Record<DietType, DietPlan | null>>(createEmptyDietPlans);
   const [workoutPlan, setWorkoutPlan] = useState<WorkoutPlan | null>(null);
-  const [shoppingList, setShoppingList] = useState<ShoppingList | null>(null);
+  const [shoppingLists, setShoppingLists] = useState<Record<PlanWeek, Record<DietType, ShoppingList | null>>>(createEmptyShoppingLists);
   const [todayProgress, setTodayProgress] = useState<ProgressDay | null>(null);
   const [monthSummary, setMonthSummary] = useState<ProgressSummary | null>(null);
   const [yearSummary, setYearSummary] = useState<ProgressSummary | null>(null);
   const [weekProgress, setWeekProgress] = useState<Record<string, ProgressDay>>({});
   const [selectedDietDay, setSelectedDietDay] = useState(defaultSelectedDay);
+  const [selectedDietType, setSelectedDietType] = useState<DietType>("single-food");
   const [selectedWorkoutDay, setSelectedWorkoutDay] = useState(defaultSelectedDay);
+  const [selectedShoppingDietType, setSelectedShoppingDietType] = useState<DietType>("single-food");
+  const [selectedShoppingWeek, setSelectedShoppingWeek] = useState<PlanWeek>("current");
   const [profileDraft, setProfileDraft] = useState<ProfileDraft>(emptyDraft);
   const [createEmail, setCreateEmail] = useState("");
   const [createPassword, setCreatePassword] = useState("");
@@ -311,6 +499,8 @@ function App() {
   const [statusMessage, setStatusMessage] = useState("Checking your session...");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [dietGenerationStatus, setDietGenerationStatus] = useState<SectionGenerationStatus | null>(null);
+  const [workoutGenerationStatus, setWorkoutGenerationStatus] = useState<SectionGenerationStatus | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [pendingMealKey, setPendingMealKey] = useState<string | null>(null);
   const [pendingWorkoutDay, setPendingWorkoutDay] = useState<number | null>(null);
@@ -323,12 +513,23 @@ function App() {
   } | null>(null);
   const mealActionQueueRef = useRef<Promise<void>>(Promise.resolve());
   const authLayoutRef = useRef<HTMLDivElement | null>(null);
+  const autoWorkoutRefreshAttemptRef = useRef<string | null>(null);
+  const activeSessionUserIdRef = useRef<string | null>(null);
 
   const weekDays = getCurrentWeek();
   const today = todayKey();
   const weekByNumber = dayDateMap(weekDays);
   const currentWeekPosition = weekDays.find((day) => day.date === today)?.dayNumber ?? 1;
   const profileComplete = user ? isProfileReady(user) : false;
+  const activeDietType = resolveCurrentDietType(user);
+  const activeCurrentShoppingList = shoppingLists.current[activeDietType];
+  const isRefreshingWorkout = workoutGenerationStatus !== null;
+  const isRegeneratingPlan = dietGenerationStatus?.source === "redo-plan"
+    || workoutGenerationStatus?.source === "redo-plan";
+
+  useEffect(() => {
+    activeSessionUserIdRef.current = sessionUserId;
+  }, [sessionUserId]);
 
   useEffect(() => {
     const storedSession = parseStoredSession(window.localStorage.getItem(storageKey));
@@ -365,6 +566,35 @@ function App() {
       window.removeEventListener(unauthorizedEvent, handleUnauthorized as EventListener);
     };
   }, []);
+
+  useEffect(() => {
+    if (!sessionUserId) {
+      setDietGenerationStatus(null);
+      setWorkoutGenerationStatus(null);
+      return;
+    }
+
+    setDietGenerationStatus(readStoredGenerationStatus(sessionUserId, "diet"));
+    setWorkoutGenerationStatus(readStoredGenerationStatus(sessionUserId, "workout"));
+  }, [sessionUserId]);
+
+  useEffect(() => {
+    if (!sessionUserId || !user || !isProfileReady(user) || isRefreshingWorkout) {
+      return;
+    }
+
+    if (!shouldAutoRefreshWorkout(sessionUserId)) {
+      return;
+    }
+
+    const refreshAttemptKey = `${sessionUserId}:${monthKey()}`;
+    if (autoWorkoutRefreshAttemptRef.current === refreshAttemptKey) {
+      return;
+    }
+
+    autoWorkoutRefreshAttemptRef.current = refreshAttemptKey;
+    void regenerateWorkoutPlan({ automatic: true });
+  }, [isRefreshingWorkout, sessionUserId, user]);
 
   useLayoutEffect(() => {
     if (!authLayoutRef.current || (sessionUserId && user)) {
@@ -447,6 +677,26 @@ function App() {
     setSessionExpiresAt(session.expiresAt);
   }
 
+  function isCurrentSession(userId: string) {
+    return activeSessionUserIdRef.current === userId;
+  }
+
+  function syncDietGenerationStatus(userId: string, status: SectionGenerationStatus | null) {
+    persistGenerationStatus(userId, "diet", status);
+
+    if (isCurrentSession(userId)) {
+      setDietGenerationStatus(status);
+    }
+  }
+
+  function syncWorkoutGenerationStatus(userId: string, status: SectionGenerationStatus | null) {
+    persistGenerationStatus(userId, "workout", status);
+
+    if (isCurrentSession(userId)) {
+      setWorkoutGenerationStatus(status);
+    }
+  }
+
   function clearSession(message?: string) {
     window.localStorage.removeItem(storageKey);
     api.clearAccessToken();
@@ -454,19 +704,25 @@ function App() {
     setAuthAccount(null);
     setSessionExpiresAt(null);
     setUser(null);
-    setDietPlan(null);
+    setDietPlans(createEmptyDietPlans());
     setWorkoutPlan(null);
-    setShoppingList(null);
+    setShoppingLists(createEmptyShoppingLists());
     setTodayProgress(null);
     setMonthSummary(null);
     setYearSummary(null);
     setWeekProgress({});
+    setSelectedDietType("single-food");
+    setSelectedShoppingDietType("single-food");
+    setSelectedShoppingWeek("current");
     setProfileDraft(emptyDraft);
     setActiveView("dashboard");
     setRecipePreview(null);
     setPendingMealKey(null);
     setPendingWorkoutDay(null);
     setPendingShoppingItemId(null);
+    setDietGenerationStatus(null);
+    setWorkoutGenerationStatus(null);
+    autoWorkoutRefreshAttemptRef.current = null;
     setHydrated(true);
     setBusyAction(null);
     setStatusMessage("Create a member or sign in.");
@@ -485,14 +741,19 @@ function App() {
 
     try {
       const freshUser = await api.getUser(userId);
-      const [freshDiet, freshWorkout, freshShopping, freshToday, freshMonth, freshYear] = await Promise.all([
-        api.getDietPlan(userId),
+      const [singleFoodDiet, recipeDiet, freshWorkout, singleFoodShoppingCurrent, recipeShoppingCurrent, singleFoodShoppingNext, recipeShoppingNext, freshToday, freshMonth, freshYear] = await Promise.all([
+        api.getDietPlan(userId, { dietType: "single-food" }),
+        api.getDietPlan(userId, { dietType: "recipes" }),
         api.getWorkoutPlan(userId),
-        api.getShoppingList(userId),
+        api.getShoppingList(userId, { dietType: "single-food", week: "current" }),
+        api.getShoppingList(userId, { dietType: "recipes", week: "current" }),
+        api.getShoppingList(userId, { dietType: "single-food", week: "next" }),
+        api.getShoppingList(userId, { dietType: "recipes", week: "next" }),
         api.getProgressDay(userId, today),
         api.getProgressSummary(userId, "month", today),
         api.getProgressSummary(userId, "year", today),
       ]);
+      const activeDietType = resolveCurrentDietType(freshUser);
 
       const progressDays = await Promise.all(
         weekDays.map(async (weekDay) => {
@@ -500,6 +761,7 @@ function App() {
           return [weekDay.date, progressDay] as const;
         }),
       );
+      const nextWeekProgress = Object.fromEntries(progressDays);
 
       startTransition(() => {
         setSessionUserId(userId);
@@ -507,13 +769,28 @@ function App() {
         setSessionExpiresAt(nextExpiresAt);
         setUser(freshUser);
         setProfileDraft(toDraft(freshUser));
-        setDietPlan(freshDiet);
+        setDietPlans({
+          "single-food": singleFoodDiet ? withDietMealStateDefaults(singleFoodDiet) : null,
+          recipes: recipeDiet ? withDietMealStateDefaults(recipeDiet) : null,
+        });
         setWorkoutPlan(freshWorkout);
-        setShoppingList(freshShopping);
+        setShoppingLists({
+          current: {
+            "single-food": singleFoodShoppingCurrent,
+            recipes: recipeShoppingCurrent,
+          },
+          next: {
+            "single-food": singleFoodShoppingNext,
+            recipes: recipeShoppingNext,
+          },
+        });
         setTodayProgress(freshToday);
         setMonthSummary(freshMonth);
         setYearSummary(freshYear);
-        setWeekProgress(Object.fromEntries(progressDays));
+        setWeekProgress(nextWeekProgress);
+        setSelectedDietType(activeDietType);
+        setSelectedShoppingDietType(activeDietType);
+        setSelectedShoppingWeek("current");
         setActiveView(isProfileReady(freshUser) ? "dashboard" : "settings");
         setHydrated(true);
       });
@@ -542,11 +819,13 @@ function App() {
       ),
     ]);
 
+    const nextWeekProgress = Object.fromEntries(progressDays);
+
     startTransition(() => {
       setTodayProgress(freshToday);
       setMonthSummary(freshMonth);
       setYearSummary(freshYear);
-      setWeekProgress(Object.fromEntries(progressDays));
+      setWeekProgress(nextWeekProgress);
     });
   }
 
@@ -628,43 +907,93 @@ function App() {
     }
   }
 
-  async function saveProfile(options?: { regenerate?: boolean; dietType?: DietType }) {
+  async function saveProfile(options?: {
+    regenerate?: boolean;
+    dietType?: DietType;
+    week?: PlanWeek;
+  }) {
     if (!sessionUserId) {
       return;
     }
 
-    setBusyAction(options?.regenerate ? "generate" : "save");
+    const requestUserId = sessionUserId;
+    setBusyAction("save");
     setErrorMessage(null);
 
     try {
-      await api.saveUser(sessionUserId, buildSavePayload({
+      await api.saveUser(requestUserId, buildSavePayload({
         ...profileDraft,
         kindOfDiet: options?.dietType ?? profileDraft.kindOfDiet,
       }));
 
-      const refreshedUser = await api.getUser(sessionUserId);
-      setUser(refreshedUser);
-      setProfileDraft(toDraft(refreshedUser));
+      const refreshedUser = await api.getUser(requestUserId);
+      const resolvedDietType = options?.dietType ?? resolveCurrentDietType(refreshedUser);
 
-      if (options?.regenerate) {
-        const generated = await api.generateCompletePlan(
-          sessionUserId,
-          options.dietType ?? (refreshedUser.kindOfDiet === "recipes" ? "recipes" : "single-food"),
-        );
-        hydrateGeneratedPlans(generated);
+      if (isCurrentSession(requestUserId)) {
+        setUser(refreshedUser);
+        setProfileDraft(toDraft(refreshedUser));
       }
 
-      await loadWorkspace(sessionUserId, "Studio refreshed.");
+      if (options?.regenerate) {
+        const week = options.week ?? "current";
+        syncDietGenerationStatus(requestUserId, {
+          source: "redo-plan",
+          title: `Updating ${resolvedDietType === "recipes" ? "recipe" : "single-food"} diet`,
+          message: `Saving the refreshed ${resolvedDietType === "recipes" ? "recipe" : "single-food"} week in the background.`,
+          startedAt: new Date().toISOString(),
+          dietType: resolvedDietType,
+        });
+        syncWorkoutGenerationStatus(requestUserId, {
+          source: "redo-plan",
+          title: "Updating workout plan",
+          message: "Rebuilding your workout block in the background.",
+          startedAt: new Date().toISOString(),
+        });
+
+        if (isCurrentSession(requestUserId)) {
+          setBusyAction(null);
+        }
+
+        try {
+          const generated = await api.generateCompletePlan(
+            requestUserId,
+            resolvedDietType,
+            week,
+          );
+
+          if (isCurrentSession(requestUserId)) {
+            hydrateGeneratedPlans(generated, resolvedDietType, week);
+          }
+        } finally {
+          syncDietGenerationStatus(requestUserId, null);
+          syncWorkoutGenerationStatus(requestUserId, null);
+        }
+      }
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Unable to save your profile");
+      if (isCurrentSession(requestUserId)) {
+        setErrorMessage(error instanceof Error ? error.message : "Unable to save your profile");
+      }
     } finally {
-      setBusyAction(null);
+      if (isCurrentSession(requestUserId)) {
+        setBusyAction(null);
+      }
     }
   }
 
-  function hydrateGeneratedPlans(result: CompletePlanResult) {
+  function hydrateGeneratedPlans(
+    result: CompletePlanResult,
+    dietType: DietType,
+    week: PlanWeek = "current",
+  ) {
     if (result.dietPlan) {
-      setDietPlan(result.dietPlan);
+      const hydratedDietPlan = withDietMealStateDefaults(result.dietPlan);
+
+      if (week === "current") {
+        setDietPlans((current) => ({
+          ...current,
+          [dietType]: hydratedDietPlan,
+        }));
+      }
     }
 
     if (result.workoutPlan) {
@@ -672,7 +1001,13 @@ function App() {
     }
 
     if (result.shoppingList) {
-      setShoppingList(result.shoppingList);
+      setShoppingLists((current) => ({
+        ...current,
+        [week]: {
+          ...current[week],
+          [dietType]: result.shoppingList,
+        },
+      }));
     }
   }
 
@@ -681,32 +1016,135 @@ function App() {
       return;
     }
 
-    setBusyAction("generate");
+    const requestUserId = sessionUserId;
     setErrorMessage(null);
+    syncDietGenerationStatus(requestUserId, {
+      source: "redo-plan",
+      title: `Updating ${dietType === "recipes" ? "recipe" : "single-food"} diet`,
+      message: `Refreshing the saved ${dietType === "recipes" ? "recipe" : "single-food"} week in the background.`,
+      startedAt: new Date().toISOString(),
+      dietType,
+    });
+    syncWorkoutGenerationStatus(requestUserId, {
+      source: "redo-plan",
+      title: "Updating workout plan",
+      message: "Refreshing the linked workout block in the background.",
+      startedAt: new Date().toISOString(),
+    });
 
     try {
-      const result = await api.generateCompletePlan(sessionUserId, dietType);
-      hydrateGeneratedPlans(result);
-      await loadWorkspace(sessionUserId, "Week rebuilt.");
+      const result = await api.generateCompletePlan(requestUserId, dietType, "current");
+
+      if (isCurrentSession(requestUserId)) {
+        hydrateGeneratedPlans(result, dietType, "current");
+      }
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Unable to rebuild plan");
-      setBusyAction(null);
+      if (isCurrentSession(requestUserId)) {
+        setErrorMessage(error instanceof Error ? error.message : "Unable to rebuild plan");
+      }
+    } finally {
+      syncDietGenerationStatus(requestUserId, null);
+      syncWorkoutGenerationStatus(requestUserId, null);
     }
   }
 
-  async function toggleMeal(day: DietPlanDay, mealSlot: MealSlot, completed: boolean) {
+  async function generateMissingDietMode(dietType: DietType) {
+    if (!sessionUserId) {
+      return;
+    }
+
+    const requestUserId = sessionUserId;
+    setErrorMessage(null);
+    syncDietGenerationStatus(requestUserId, {
+      source: "diet-mode",
+      title: `Creating ${dietType === "recipes" ? "recipe" : "single-food"} table`,
+      message: `Generating the missing ${dietType === "recipes" ? "recipe" : "single-food"} diet table in the background.`,
+      startedAt: new Date().toISOString(),
+      dietType,
+    });
+
+    try {
+      const generatedDietPlan = await api.generateDietPlan(requestUserId, dietType, {
+        week: "current",
+        activateDietType: false,
+      });
+
+      if (isCurrentSession(requestUserId)) {
+        setDietPlans((current) => ({
+          ...current,
+          [dietType]: withDietMealStateDefaults(generatedDietPlan),
+        }));
+        setSelectedDietType(dietType);
+      }
+    } catch (error) {
+      if (isCurrentSession(requestUserId)) {
+        setErrorMessage(error instanceof Error ? error.message : "Unable to generate this diet mode");
+      }
+    } finally {
+      syncDietGenerationStatus(requestUserId, null);
+    }
+  }
+
+  async function regenerateWorkoutPlan(options?: { automatic?: boolean }) {
+    if (!sessionUserId || isRefreshingWorkout) {
+      return;
+    }
+
+    const requestUserId = sessionUserId;
+    const automatic = options?.automatic ?? false;
+    syncWorkoutGenerationStatus(requestUserId, {
+      source: automatic ? "auto-workout" : "redo-workout",
+      title: automatic ? "Refreshing monthly workout" : "Updating workout plan",
+      message: automatic
+        ? "Sunday auto-refresh is updating this month's workout block in the background."
+        : "Rebuilding your workout block in the background.",
+      startedAt: new Date().toISOString(),
+    });
+
+    if (!automatic) {
+      setErrorMessage(null);
+    }
+
+    try {
+      const generatedWorkoutPlan = await api.generateWorkoutPlan(requestUserId);
+
+      if (isCurrentSession(requestUserId)) {
+        setWorkoutPlan(generatedWorkoutPlan);
+      }
+
+      markWorkoutRefreshMonth(requestUserId);
+    } catch (error) {
+      if (isCurrentSession(requestUserId)) {
+        setErrorMessage(error instanceof Error ? error.message : "Unable to rebuild workout plan");
+      }
+    } finally {
+      syncWorkoutGenerationStatus(requestUserId, null);
+    }
+  }
+
+  async function toggleMeal(
+    day: DietPlanDay,
+    mealSlot: MealSlot,
+    completed: boolean,
+    dietType: DietType,
+  ) {
     if (!sessionUserId) {
       return;
     }
 
     const mappedDate = weekByNumber[day.day];
     const mealKey = `${mappedDate}:${mealSlot}`;
+    const previousDietPlans = dietPlans;
+    setDietPlans((current) => patchDietPlansMealState(current, dietType, day.day, mealSlot, completed));
     setPendingMealKey(mealKey);
 
     mealActionQueueRef.current = mealActionQueueRef.current
       .catch(() => undefined)
       .then(async () => {
-        const result = await api.toggleMeal(sessionUserId, mealSlot, mappedDate, completed);
+        const result = await api.toggleMeal(sessionUserId, mealSlot, mappedDate, completed, {
+          dietType,
+          week: "current",
+        });
         setWeekProgress((current) => ({ ...current, [mappedDate]: result }));
 
         if (mappedDate === today) {
@@ -716,6 +1154,7 @@ function App() {
         await refreshProgress(sessionUserId);
       })
       .catch((error) => {
+        setDietPlans(previousDietPlans);
         setErrorMessage(error instanceof Error ? error.message : "Unable to update meal progress");
       })
       .finally(() => {
@@ -757,8 +1196,22 @@ function App() {
     setPendingShoppingItemId(item.id);
 
     try {
-      const result = await api.toggleShoppingItem(sessionUserId, item.id, checked);
-      setShoppingList(result);
+      const result = await api.toggleShoppingItem(
+        sessionUserId,
+        item.id,
+        checked,
+        {
+          dietType: selectedShoppingDietType,
+          week: selectedShoppingWeek,
+        },
+      );
+      setShoppingLists((current) => ({
+        ...current,
+        [selectedShoppingWeek]: {
+          ...current[selectedShoppingWeek],
+          [selectedShoppingDietType]: result,
+        },
+      }));
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Unable to update the market list");
     } finally {
@@ -906,8 +1359,9 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
+    <>
+      <div className="app-shell">
+        <aside className="sidebar">
         <div className="sidebar-brand">
           <div className="sidebar-brand-top">
             <div className="sidebar-brand-mark">
@@ -957,10 +1411,10 @@ function App() {
             Sign out
           </button>
         </div>
-      </aside>
+        </aside>
 
-      <main className="workspace">
-        <section className="hero-banner">
+        <main className="workspace">
+          <section className="hero-banner">
           <div>
             <span className="eyebrow">Today at a glance</span>
             <h2>
@@ -1013,6 +1467,7 @@ function App() {
             onSave={() => saveProfile()}
             onSaveAndGenerate={() => saveProfile({ regenerate: true })}
             busyAction={busyAction}
+            isRegeneratingPlan={isRegeneratingPlan}
           />
         ) : (
           <>
@@ -1022,18 +1477,20 @@ function App() {
                 todayProgress={todayProgress}
                 weekDays={weekDays}
                 weekProgress={weekProgress}
-                shoppingList={shoppingList}
-                onGenerate={() => regenerateWeek((user.kindOfDiet === "recipes" ? "recipes" : "single-food"))}
-                busyAction={busyAction}
+                shoppingList={activeCurrentShoppingList}
+                onGenerate={() => regenerateWeek(activeDietType)}
+                isRegeneratingPlan={isRegeneratingPlan}
                 energyUnitPreference={user.energyUnitPreference}
               />
             ) : null}
 
             {activeView === "diet" ? (
               <DietView
-                plan={dietPlan}
+                plans={dietPlans}
                 selectedDay={selectedDietDay}
                 onSelectDay={setSelectedDietDay}
+                selectedDietType={selectedDietType}
+                onSelectDietType={setSelectedDietType}
                 onToggleMeal={toggleMeal}
                 onOpenRecipe={(entry) => setRecipePreview({
                   title: entry.object,
@@ -1041,11 +1498,12 @@ function App() {
                   instructions: entry.instructions ?? [],
                   preparationTimeMinutes: entry.preparationTimeMinutes,
                 })}
-                currentDietType={(user.kindOfDiet === "recipes" ? "recipes" : "single-food")}
                 weekDays={weekDays}
                 weekProgress={weekProgress}
                 pendingMealKey={pendingMealKey}
                 energyUnitPreference={user.energyUnitPreference}
+                onGenerateMissingDietType={generateMissingDietMode}
+                generationStatus={dietGenerationStatus}
               />
             ) : null}
 
@@ -1055,16 +1513,22 @@ function App() {
                 selectedDay={selectedWorkoutDay}
                 onSelectDay={setSelectedWorkoutDay}
                 onToggleWorkout={toggleWorkout}
+                onRegenerateWorkout={() => regenerateWorkoutPlan()}
                 weekDays={weekDays}
                 weekProgress={weekProgress}
                 pendingWorkoutDay={pendingWorkoutDay}
                 energyUnitPreference={user.energyUnitPreference}
+                generationStatus={workoutGenerationStatus}
               />
             ) : null}
 
             {activeView === "shopping" ? (
               <ShoppingView
-                shoppingList={shoppingList}
+                shoppingLists={shoppingLists}
+                selectedDietType={selectedShoppingDietType}
+                onSelectDietType={setSelectedShoppingDietType}
+                selectedWeek={selectedShoppingWeek}
+                onSelectWeek={setSelectedShoppingWeek}
                 onToggleItem={toggleShoppingItem}
                 pendingItemId={pendingShoppingItemId}
               />
@@ -1077,17 +1541,43 @@ function App() {
                 onSave={() => saveProfile()}
                 onSaveAndGenerate={() => saveProfile({ regenerate: true })}
                 busyAction={busyAction}
+                isRegeneratingPlan={isRegeneratingPlan}
                 compact
               />
             ) : null}
           </>
         )}
-      </main>
+        </main>
 
       <RecipeModal
         recipePreview={recipePreview}
         onClose={() => setRecipePreview(null)}
       />
+    </div>
+    </>
+  );
+}
+
+function SectionGenerationCard(props: {
+  kind: SectionGenerationKind;
+  status: SectionGenerationStatus;
+}) {
+  return (
+    <div className="panel-status-card" role="status" aria-live="polite" aria-busy="true">
+      <div className="panel-status-media" aria-hidden="true">
+        <DotLottieReact
+          src={props.kind === "diet" ? "/diet-generation.lottie" : "/workout-generation.lottie"}
+          loop
+          autoplay
+          renderConfig={{ autoResize: true }}
+          style={{ width: "100%", height: "100%" }}
+        />
+      </div>
+      <div className="panel-status-copy">
+        <span className="eyebrow">{props.kind === "diet" ? "Diet Loading" : "Workout Loading"}</span>
+        <strong>{props.status.title}</strong>
+        <p>{props.status.message}</p>
+      </div>
     </div>
   );
 }
@@ -1099,7 +1589,7 @@ function DashboardView(props: {
   weekProgress: Record<string, ProgressDay>;
   shoppingList: ShoppingList | null;
   onGenerate: () => void;
-  busyAction: string | null;
+  isRegeneratingPlan: boolean;
   energyUnitPreference: EnergyUnit;
 }) {
   const {
@@ -1128,10 +1618,10 @@ function DashboardView(props: {
             type="button"
             className="secondary-button"
             onClick={props.onGenerate}
-            disabled={props.busyAction === "generate"}
+            disabled={props.isRegeneratingPlan}
           >
             <RefreshCcw02 className="button-icon" />
-            {props.busyAction === "generate" ? "Refreshing week..." : "Refresh week"}
+            {props.isRegeneratingPlan ? "Refreshing plan..." : "Refresh week"}
           </button>
         </div>
         <div className="stats-grid">
@@ -1308,29 +1798,77 @@ function BodyCompositionChart(props: {
 }
 
 function DietView(props: {
-  plan: DietPlan | null;
+  plans: Record<DietType, DietPlan | null>;
   selectedDay: number;
   onSelectDay: (day: number) => void;
-  onToggleMeal: (day: DietPlanDay, mealSlot: MealSlot, completed: boolean) => Promise<void>;
+  selectedDietType: DietType;
+  onSelectDietType: (dietType: DietType) => void;
+  onToggleMeal: (
+    day: DietPlanDay,
+    mealSlot: MealSlot,
+    completed: boolean,
+    dietType: DietType,
+  ) => Promise<void>;
   onOpenRecipe: (entry: DietPlanEntry) => void;
-  currentDietType: DietType;
   weekDays: WeekDay[];
   weekProgress: Record<string, ProgressDay>;
   pendingMealKey: string | null;
   energyUnitPreference: EnergyUnit;
+  onGenerateMissingDietType: (dietType: DietType) => Promise<void>;
+  generationStatus: SectionGenerationStatus | null;
 }) {
-  if (!props.plan) {
+  const plan = props.plans[props.selectedDietType];
+  const isGeneratingDiet = props.generationStatus !== null;
+
+  if (!plan) {
     return (
-      <EmptyState
-        title="No weekly diet yet"
-        body="Generate your 7-day diet to unlock meal cards, grams, macros, and meal check-offs."
-      />
+      <div className="stack-page">
+        <section className="panel">
+          <div className="panel-header split-end">
+            <div>
+              <span className="eyebrow">7-day diet</span>
+              <h3>Select a saved table</h3>
+              <p className="muted-line">Switch between single foods and recipes. If a table is missing, generate it once here.</p>
+            </div>
+            <div className="panel-header-aside">
+              {props.generationStatus ? (
+                <SectionGenerationCard kind="diet" status={props.generationStatus} />
+              ) : null}
+              <div className="inline-actions">
+                {dietTypeOptions.map((item) => (
+                  <button
+                    key={item.value}
+                    type="button"
+                    className={item.value === props.selectedDietType ? "toggle active" : "toggle"}
+                    onClick={() => props.onSelectDietType(item.value)}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <EmptyState
+          title={`No ${props.selectedDietType === "recipes" ? "recipe" : "single-food"} week yet`}
+          body="There is no data in this table yet. Generate it once and the meals view will render it immediately."
+          actionLabel={isGeneratingDiet
+            ? "Building table..."
+            : `Generate ${props.selectedDietType === "recipes" ? "recipes" : "single foods"}`}
+          onAction={() => props.onGenerateMissingDietType(props.selectedDietType)}
+          actionDisabled={isGeneratingDiet}
+        >
+          {props.generationStatus ? (
+            <SectionGenerationCard kind="diet" status={props.generationStatus} />
+          ) : null}
+        </EmptyState>
+      </div>
     );
   }
 
-  const activeDay = props.plan.days.find((day) => day.day === props.selectedDay) ?? props.plan.days[0];
+  const activeDay = plan.days.find((day) => day.day === props.selectedDay) ?? plan.days[0];
   const activeDate = props.weekDays.find((item) => item.dayNumber === activeDay.day)?.date ?? todayKey();
-  const activeProgress = props.weekProgress[activeDate];
 
   return (
     <div className="stack-page">
@@ -1338,15 +1876,32 @@ function DietView(props: {
         <div className="panel-header split-end">
           <div>
             <span className="eyebrow">7-day diet</span>
-            <h3>{formatEnergyValue(Math.round(props.plan.summary.dailyCalories * kilojoulesPerCalorie), props.energyUnitPreference)} target</h3>
+            <h3>{formatEnergyValue(Math.round(plan.summary.dailyCalories * kilojoulesPerCalorie), props.energyUnitPreference)} target</h3>
             <p className="muted-line">
-              {props.currentDietType === "recipes" ? "Recipe mode" : "Simple meals mode"} · Protein {props.plan.summary.macros.protein} · Carbs {props.plan.summary.macros.carbs} · Fats {props.plan.summary.macros.fats}
+              {props.selectedDietType === "recipes" ? "Recipe mode" : "Simple meals mode"} · Protein {plan.summary.macros.protein} · Carbs {plan.summary.macros.carbs} · Fats {plan.summary.macros.fats}
             </p>
+          </div>
+          <div className="panel-header-aside">
+            {props.generationStatus ? (
+              <SectionGenerationCard kind="diet" status={props.generationStatus} />
+            ) : null}
+            <div className="inline-actions">
+              {dietTypeOptions.map((item) => (
+                <button
+                  key={item.value}
+                  type="button"
+                  className={item.value === props.selectedDietType ? "toggle active" : "toggle"}
+                  onClick={() => props.onSelectDietType(item.value)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
         <div className="day-strip">
-          {props.plan.days.map((day) => (
+          {plan.days.map((day) => (
             <button
               key={day.day}
               type="button"
@@ -1365,8 +1920,7 @@ function DietView(props: {
           const entries = meal.slot === "supplements"
             ? activeDay.supplements
             : [(activeDay[meal.slot] as DietPlanEntry)];
-          const progress = activeProgress?.meals[meal.slot];
-          const done = progress?.completed ?? false;
+          const done = activeDay.eatenMeals?.[meal.slot] ?? false;
           const currentMealKey = `${activeDate}:${meal.slot}`;
           const primaryEntry = entries[0];
           const cardTitle = primaryEntry?.object ?? "Open slot";
@@ -1381,7 +1935,7 @@ function DietView(props: {
                 <button
                   type="button"
                   className={done ? "check-button active" : "check-button"}
-                  onClick={() => props.onToggleMeal(activeDay, meal.slot, !done)}
+                  onClick={() => props.onToggleMeal(activeDay, meal.slot, !done, props.selectedDietType)}
                   disabled={props.pendingMealKey === currentMealKey}
                 >
                   {props.pendingMealKey === currentMealKey ? "Saving..." : done ? "Eaten" : "Mark eaten"}
@@ -1391,7 +1945,7 @@ function DietView(props: {
               {entries.map((entry, index) => (
                 <div key={`${meal.slot}-${index}`} className="entry-block">
                   <p className="entry-description">{entry.description}</p>
-                  {props.currentDietType === "recipes" ? (
+                  {props.selectedDietType === "recipes" ? (
                     entry.instructions?.length ? (
                       <button
                         type="button"
@@ -1434,17 +1988,26 @@ function WorkoutView(props: {
   selectedDay: number;
   onSelectDay: (day: number) => void;
   onToggleWorkout: (day: WorkoutPlanDay, completed: boolean) => Promise<void>;
+  onRegenerateWorkout: () => void;
   weekDays: WeekDay[];
   weekProgress: Record<string, ProgressDay>;
   pendingWorkoutDay: number | null;
   energyUnitPreference: EnergyUnit;
+  generationStatus: SectionGenerationStatus | null;
 }) {
   if (!props.plan) {
     return (
       <EmptyState
         title="No workout week yet"
-        body="Generate a full plan to unlock weekly sessions, burn estimates, and workout check-offs."
-      />
+        body="Generate a workout-only block to unlock weekly sessions, burn estimates, and workout check-offs."
+        actionLabel={props.generationStatus ? "Updating workout..." : "Build workout"}
+        onAction={props.onRegenerateWorkout}
+        actionDisabled={props.generationStatus !== null}
+      >
+        {props.generationStatus ? (
+          <SectionGenerationCard kind="workout" status={props.generationStatus} />
+        ) : null}
+      </EmptyState>
     );
   }
 
@@ -1465,6 +2028,20 @@ function WorkoutView(props: {
                 props.energyUnitPreference,
               )} weekly burn
             </p>
+          </div>
+          <div className="panel-header-aside">
+            {props.generationStatus ? (
+              <SectionGenerationCard kind="workout" status={props.generationStatus} />
+            ) : null}
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={props.onRegenerateWorkout}
+              disabled={props.generationStatus !== null}
+            >
+              <RefreshCcw02 className="button-icon" />
+              {props.generationStatus ? "Updating workout..." : "Redo workout"}
+            </button>
           </div>
         </div>
 
@@ -1551,47 +2128,75 @@ function WorkoutView(props: {
 }
 
 function ShoppingView(props: {
-  shoppingList: ShoppingList | null;
+  shoppingLists: Record<PlanWeek, Record<DietType, ShoppingList | null>>;
+  selectedDietType: DietType;
+  onSelectDietType: (dietType: DietType) => void;
+  selectedWeek: PlanWeek;
+  onSelectWeek: (week: PlanWeek) => void;
   onToggleItem: (item: ShoppingItem, checked: boolean) => Promise<void>;
   pendingItemId: string | null;
 }) {
-  if (!props.shoppingList) {
+  const shoppingList = props.shoppingLists[props.selectedWeek][props.selectedDietType];
+
+  if (!shoppingList) {
     return (
       <EmptyState
-        title="No weekly market list yet"
-        body="Generate the complete plan to save a 7-day market list with grams for food and milliliters for liquids."
+        title={`No ${props.selectedWeek === "next" ? "next-week" : "current-week"} ${props.selectedDietType === "recipes" ? "recipe" : "single-food"} market list yet`}
+        body="That market table has not been generated yet. Current and next-week lists are stored separately for each diet mode."
       />
     );
   }
 
-  const entries = Object.entries(props.shoppingList.categories);
+  const entries = Object.entries(shoppingList.categories);
 
   return (
     <div className="view-grid">
       <section className="panel span-2">
-        <div className="panel-header">
+        <div className="panel-header split-end">
           <div>
             <span className="eyebrow">Weekly market list</span>
-            <h3>{props.shoppingList.metadata.totalItems} items for {props.shoppingList.metadata.daysCovered ?? 7} days</h3>
+            <h3>{shoppingList.metadata.totalItems} items for {shoppingList.metadata.daysCovered ?? 7} days</h3>
+          </div>
+          <div className="inline-actions">
+            {dietTypeOptions.map((item) => (
+              <button
+                key={item.value}
+                type="button"
+                className={item.value === props.selectedDietType ? "toggle active" : "toggle"}
+                onClick={() => props.onSelectDietType(item.value)}
+              >
+                {item.label}
+              </button>
+            ))}
+            {planWeeks.map((week) => (
+              <button
+                key={week}
+                type="button"
+                className={week === props.selectedWeek ? "toggle active" : "toggle"}
+                onClick={() => props.onSelectWeek(week)}
+              >
+                {week === "current" ? "This week" : "Next week"}
+              </button>
+            ))}
           </div>
         </div>
         <div className="stats-grid">
           <MetricCard
             title="Estimated cost"
-            value={`$${props.shoppingList.metadata.estimatedCost} ${props.shoppingList.metadata.currency ?? "AUD"}`}
-            detail={props.shoppingList.metadata.recommendedStore
-              ? `${props.shoppingList.metadata.recommendedStore} looks cheapest`
+            value={`$${shoppingList.metadata.estimatedCost} ${shoppingList.metadata.currency ?? "AUD"}`}
+            detail={shoppingList.metadata.recommendedStore
+              ? `${shoppingList.metadata.recommendedStore} looks cheapest`
               : "AI estimate"}
           />
-          <MetricCard title="Store sections" value={String(props.shoppingList.metadata.storeSections)} detail={props.shoppingList.metadata.prepTime} />
-          <MetricCard title="Batch items" value={String(props.shoppingList.mealPrepStrategy.batchCookItems.length)} detail={firstOrEmpty(props.shoppingList.mealPrepStrategy.batchCookItems)} />
-          <MetricCard title="Pantry staples" value={String(props.shoppingList.pantryChecklist.length)} detail={firstOrEmpty(props.shoppingList.pantryChecklist)} />
+          <MetricCard title="Store sections" value={String(shoppingList.metadata.storeSections)} detail={shoppingList.metadata.prepTime} />
+          <MetricCard title="Batch items" value={String(shoppingList.mealPrepStrategy.batchCookItems.length)} detail={firstOrEmpty(shoppingList.mealPrepStrategy.batchCookItems)} />
+          <MetricCard title="Pantry staples" value={String(shoppingList.pantryChecklist.length)} detail={firstOrEmpty(shoppingList.pantryChecklist)} />
         </div>
-        {props.shoppingList.metadata.estimatedCostAudByStore ? (
+        {shoppingList.metadata.estimatedCostAudByStore ? (
           <div className="store-price-grid">
-            <MetricCard title="Coles" value={`$${props.shoppingList.metadata.estimatedCostAudByStore.coles}`} detail="Estimated basket" />
-            <MetricCard title="Woolworths" value={`$${props.shoppingList.metadata.estimatedCostAudByStore.woolworths}`} detail="Estimated basket" />
-            <MetricCard title="Aldi" value={`$${props.shoppingList.metadata.estimatedCostAudByStore.aldi}`} detail="Estimated basket" />
+            <MetricCard title="Coles" value={`$${shoppingList.metadata.estimatedCostAudByStore.coles}`} detail="Estimated basket" />
+            <MetricCard title="Woolworths" value={`$${shoppingList.metadata.estimatedCostAudByStore.woolworths}`} detail="Estimated basket" />
+            <MetricCard title="Aldi" value={`$${shoppingList.metadata.estimatedCostAudByStore.aldi}`} detail="Estimated basket" />
           </div>
         ) : null}
       </section>
@@ -1631,7 +2236,7 @@ function ShoppingView(props: {
           </div>
         </div>
         <div className="store-sections">
-          {props.shoppingList.byStoreSection.map((section) => (
+          {shoppingList.byStoreSection.map((section) => (
             <article key={section.section} className="subpanel">
               <strong>{section.section}</strong>
               <ul>
@@ -1816,6 +2421,7 @@ function ProfileEditor(props: {
   onSave: () => void;
   onSaveAndGenerate: () => void;
   busyAction: string | null;
+  isRegeneratingPlan?: boolean;
   compact?: boolean;
 }) {
   const { draft } = props;
@@ -1935,10 +2541,12 @@ function ProfileEditor(props: {
             type="button"
             className="primary-button"
             onClick={props.onSaveAndGenerate}
-            disabled={props.busyAction === "generate"}
+            disabled={props.busyAction === "save" || props.isRegeneratingPlan}
           >
             <Zap className="button-icon" />
-            {props.busyAction === "generate" ? "Building your week..." : "Save and build week"}
+            {props.isRegeneratingPlan
+              ? (props.compact ? "Redoing plan..." : "Building your week...")
+              : (props.compact ? "Redo plan" : "Save and build week")}
           </button>
         </div>
       </section>
@@ -2000,7 +2608,14 @@ function SummaryCard(props: {
   );
 }
 
-function EmptyState(props: { title: string; body: string }) {
+function EmptyState(props: {
+  title: string;
+  body: string;
+  actionLabel?: string;
+  onAction?: () => void;
+  actionDisabled?: boolean;
+  children?: ReactNode;
+}) {
   return (
     <section className="panel empty-state">
       <span className="empty-icon">
@@ -2009,6 +2624,17 @@ function EmptyState(props: { title: string; body: string }) {
       <span className="eyebrow">Nothing saved yet</span>
       <h3>{props.title}</h3>
       <p>{props.body}</p>
+      {props.children}
+      {props.onAction ? (
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={props.onAction}
+          disabled={props.actionDisabled}
+        >
+          {props.actionLabel}
+        </button>
+      ) : null}
     </section>
   );
 }

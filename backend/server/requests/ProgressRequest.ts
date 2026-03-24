@@ -1,4 +1,4 @@
-import { TrackableMealSlot } from "../../src/types";
+import { DietType, PlanWeek, TrackableMealSlot } from "../../src/types";
 
 export interface ProgressRouteParams {
   id: string;
@@ -11,6 +11,8 @@ export interface ProgressMealRouteParams extends ProgressRouteParams {
 export interface TrackProgressRequestBody {
   date?: string;
   completed?: boolean;
+  dietType?: DietType;
+  week?: PlanWeek;
 }
 
 export interface ProgressDayRequestQuery {

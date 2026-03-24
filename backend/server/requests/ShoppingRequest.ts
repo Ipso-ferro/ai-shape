@@ -5,4 +5,6 @@ export interface ShoppingItemRouteParams {
 
 export interface ToggleShoppingItemRequestBody {
   checked?: boolean;
+  dietType?: "recipes" | "single-food";
+  week?: "current" | "next";
 }

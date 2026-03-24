@@ -1,5 +1,6 @@
 export type ViewKey = "dashboard" | "diet" | "workout" | "shopping" | "settings";
 export type DietType = "recipes" | "single-food";
+export type PlanWeek = "current" | "next";
 export type EnergyUnit = "kj" | "cal";
 export type ProgressPeriod = "day" | "month" | "year";
 export type MealSlot =
@@ -39,13 +40,6 @@ export interface UserProfile {
   isPro: boolean;
 }
 
-export interface CreateUserResponse {
-  message: string;
-  data: {
-    id: string;
-  };
-}
-
 export interface AuthAccount {
   email: string;
   provider: "password" | "google";
@@ -63,6 +57,11 @@ export interface StoredSession {
   expiresAt: string;
   userId: string;
   account: AuthAccount;
+}
+
+export interface PlanSelectionOptions {
+  dietType?: DietType;
+  week?: PlanWeek;
 }
 
 export interface ProfileDraft {
@@ -110,6 +109,15 @@ export interface DietPlanEntry {
   kilojoules: number;
 }
 
+export interface DietPlanDayMealState {
+  breakfast: boolean;
+  snack1: boolean;
+  lunch: boolean;
+  dinner: boolean;
+  snack2: boolean;
+  supplements: boolean;
+}
+
 export interface DietPlanDay {
   day: number;
   dayName: string;
@@ -119,6 +127,7 @@ export interface DietPlanDay {
   dinner: DietPlanEntry;
   snack2: DietPlanEntry;
   supplements: DietPlanEntry[];
+  eatenMeals?: DietPlanDayMealState;
 }
 
 export interface DietPlan {
@@ -259,14 +268,7 @@ export interface ProgressDay {
     calories: number;
     kilojoules: number;
   };
-  meals: {
-    breakfast: ProgressMealStatus;
-    snack1: ProgressMealStatus;
-    lunch: ProgressMealStatus;
-    dinner: ProgressMealStatus;
-    snack2: ProgressMealStatus;
-    supplements: ProgressMealStatus;
-  };
+  meals: Record<MealSlot, ProgressMealStatus>;
   workout: ProgressWorkoutStatus;
   macroTotals: {
     proteinGrams: number;
@@ -289,8 +291,22 @@ export interface ProgressSummary {
   referenceDate: string;
   rangeStart: string;
   rangeEnd: string;
-  totals: ProgressTotals & { trackedDays: number };
+  totals: ProgressTotals & {
+    trackedDays: number;
+  };
   breakdown: ProgressSummaryBreakdown[];
+}
+
+export interface WeekDay {
+  dayNumber: number;
+  date: string;
+  label: string;
+  shortLabel: string;
+}
+
+export interface CompletePlanError {
+  type: string;
+  message: string;
 }
 
 export interface CompletePlanResult {
@@ -299,12 +315,12 @@ export interface CompletePlanResult {
   dietPlan: DietPlan | null;
   workoutPlan: WorkoutPlan | null;
   shoppingList: ShoppingList | null;
-  errors: Array<{ type: string; message: string }>;
+  errors: CompletePlanError[];
 }
 
-export interface WeekDay {
-  date: string;
-  dayName: string;
-  shortLabel: string;
-  dayNumber: number;
+export interface CreateUserResponse {
+  message: string;
+  data: {
+    id: string;
+  };
 }

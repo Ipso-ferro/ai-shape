@@ -4,6 +4,7 @@ import {
   CreateUserResponse,
   DietPlan,
   DietType,
+  PlanSelectionOptions,
   ProgressDay,
   ProgressSummary,
   ShoppingList,
@@ -35,6 +36,21 @@ const dispatchUnauthorized = (message: string) => {
       detail: { message },
     }));
   }
+};
+
+const buildPlanQuery = (options?: PlanSelectionOptions): string => {
+  const params = new URLSearchParams();
+
+  if (options?.dietType) {
+    params.set("dietType", options.dietType);
+  }
+
+  if (options?.week) {
+    params.set("week", options.week);
+  }
+
+  const query = params.toString();
+  return query.length > 0 ? `?${query}` : "";
 };
 
 const request = async <T>(
@@ -112,13 +128,40 @@ export const api = {
     method: "PUT",
     body: JSON.stringify(payload),
   }),
-  generateCompletePlan: (userId: string, dietType: DietType) => request<CompletePlanResult>(`/users/${userId}/complete-plan`, {
+  generateCompletePlan: (
+    userId: string,
+    dietType: DietType,
+    week: "current" | "next" = "current",
+  ) => request<CompletePlanResult>(`/users/${userId}/complete-plan`, {
     method: "POST",
-    body: JSON.stringify({ dietType }),
+    body: JSON.stringify({ dietType, week }),
   }),
-  getDietPlan: (userId: string) => optional<DietPlan>(`/diets/users/${userId}/plan`),
+  generateDietPlan: (
+    userId: string,
+    dietType: DietType,
+    options?: {
+      week?: "current" | "next";
+      activateDietType?: boolean;
+    },
+  ) => request<DietPlan>(`/diets/users/${userId}/plan`, {
+    method: "POST",
+    body: JSON.stringify({
+      dietType,
+      week: options?.week ?? "current",
+      activateDietType: options?.activateDietType,
+    }),
+  }),
+  getDietPlan: (userId: string, options?: PlanSelectionOptions) => (
+    optional<DietPlan>(`/diets/users/${userId}/plan${buildPlanQuery(options)}`)
+  ),
+  generateWorkoutPlan: (userId: string) => request<WorkoutPlan>(`/workouts/users/${userId}/plan`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  }),
   getWorkoutPlan: (userId: string) => optional<WorkoutPlan>(`/workouts/users/${userId}/plan`),
-  getShoppingList: (userId: string) => optional<ShoppingList>(`/shopping/users/${userId}/list`),
+  getShoppingList: (userId: string, options?: PlanSelectionOptions) => (
+    optional<ShoppingList>(`/shopping/users/${userId}/list${buildPlanQuery(options)}`)
+  ),
   getProgressDay: (userId: string, date: string) => request<ProgressDay>(`/progress/users/${userId}/day?date=${date}`),
   getProgressSummary: (userId: string, period: "month" | "year" | "day", date: string) => request<ProgressSummary>(`/progress/users/${userId}/summary?period=${period}&date=${date}`),
   toggleMeal: (
@@ -126,9 +169,15 @@ export const api = {
     mealSlot: string,
     date: string,
     completed: boolean,
+    options?: PlanSelectionOptions,
   ) => request<ProgressDay>(`/progress/users/${userId}/meals/${mealSlot}`, {
     method: "PUT",
-    body: JSON.stringify({ date, completed }),
+    body: JSON.stringify({
+      date,
+      completed,
+      dietType: options?.dietType,
+      week: options?.week,
+    }),
   }),
   toggleWorkout: (
     userId: string,
@@ -142,9 +191,14 @@ export const api = {
     userId: string,
     itemId: string,
     checked: boolean,
+    options?: PlanSelectionOptions,
   ) => request<ShoppingList>(`/shopping/users/${userId}/items/${encodeURIComponent(itemId)}`, {
     method: "PUT",
-    body: JSON.stringify({ checked }),
+    body: JSON.stringify({
+      checked,
+      dietType: options?.dietType,
+      week: options?.week,
+    }),
   }),
 };
 

@@ -9,9 +9,14 @@ import {
 } from "../../../../src/types";
 import {
   validateDietType,
+  validatePlanWeek,
   validateUserData,
 } from "../../../../src/utils/validators";
-import { DietCommand, DietType } from "../../command/DietCommand";
+import {
+  DietCommand,
+  DietType,
+  PlanWeek,
+} from "../../command/DietCommand";
 
 export type DietPlanGenerator = (
   userData: PlanDataUserCommand,
@@ -28,19 +33,30 @@ export class DietPlanService {
   async generatePlan(command: DietCommand): Promise<DietPlan> {
     const {
       dietType,
+      week,
       hydratedUserData,
-    } = await this.resolveGenerationContext(command.userId, command.dietType);
+    } = await this.resolveGenerationContext(command.userId, command.dietType, command.week);
 
     const result = await this.dietPlanGenerator(
       hydratedUserData,
       dietType,
     );
 
-    return this.repositoryUser.saveDietPlan(command.userId, result.data, dietType);
+    return this.repositoryUser.saveDietPlan(command.userId, result.data, dietType, {
+      week,
+      activateDietType: command.activateDietType,
+    });
   }
 
-  async getPlan(userId: string): Promise<DietPlan> {
-    const plan = await this.repositoryUser.getDietPlan(userId);
+  async getPlan(
+    userId: string,
+    options?: {
+      dietType?: DietType;
+      week?: PlanWeek;
+    },
+  ): Promise<DietPlan> {
+    const week = options?.week ?? "current";
+    const plan = await this.repositoryUser.getDietPlan(userId, options);
 
     if (plan) {
       return plan;
@@ -52,7 +68,12 @@ export class DietPlanService {
       throw new NotFoundError(`User with id "${userId}" was not found.`);
     }
 
-    const recoveredPlan = await this.recoverRecipePlan(userId, userData);
+    const recoveredPlan = await this.recoverRecipePlan(
+      userId,
+      userData,
+      options?.dietType,
+      week,
+    );
 
     if (recoveredPlan) {
       return recoveredPlan;
@@ -64,8 +85,10 @@ export class DietPlanService {
   private async resolveGenerationContext(
     userId: string,
     requestedDietType?: DietType,
+    requestedWeek?: PlanWeek,
   ): Promise<{
     dietType: DietType;
+    week: PlanWeek;
     hydratedUserData: PlanDataUserCommand;
   }> {
     const userData = await this.repositoryUser.getDataUser({ id: userId });
@@ -78,10 +101,13 @@ export class DietPlanService {
     validateUserData(hydratedUserData as PlanDataUserCommand);
 
     const dietType = resolveDietType(requestedDietType, userData.kindOfDiet);
+    const week = resolvePlanWeek(requestedWeek);
     validateDietType(dietType);
+    validatePlanWeek(week);
 
     return {
       dietType,
+      week,
       hydratedUserData: hydratedUserData as PlanDataUserCommand,
     };
   }
@@ -89,10 +115,12 @@ export class DietPlanService {
   private async recoverRecipePlan(
     userId: string,
     userData: NonNullable<Awaited<ReturnType<RepositoryUser["getDataUser"]>>>,
+    requestedDietType?: DietType,
+    requestedWeek: PlanWeek = "current",
   ): Promise<DietPlan | null> {
-    const dietType = resolveDietType(undefined, userData.kindOfDiet);
+    const dietType = resolveDietType(requestedDietType, userData.kindOfDiet);
 
-    if (dietType !== "recipes") {
+    if (dietType !== "recipes" || requestedWeek !== "current") {
       return null;
     }
 
@@ -105,7 +133,9 @@ export class DietPlanService {
         dietType,
       );
 
-      return this.repositoryUser.saveDietPlan(userId, result.data, dietType);
+      return this.repositoryUser.saveDietPlan(userId, result.data, dietType, {
+        week: "current",
+      });
     } catch {
       return null;
     }
@@ -122,3 +152,7 @@ const resolveDietType = (
 
   return savedDietType === "single-food" ? "single-food" : "recipes";
 };
+
+const resolvePlanWeek = (requestedWeek?: PlanWeek): PlanWeek => (
+  requestedWeek === "next" ? "next" : "current"
+);

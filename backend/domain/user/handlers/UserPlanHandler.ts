@@ -6,9 +6,14 @@ import {
 } from "../../../src/types";
 import {
   validateDietType,
+  validatePlanWeek,
   validateUserData,
 } from "../../../src/utils/validators";
-import { GenerateCompletePlanCommand, DietType } from "../command/GenerateCompletePlanCommand";
+import {
+  GenerateCompletePlanCommand,
+  DietType,
+  PlanWeek,
+} from "../command/GenerateCompletePlanCommand";
 import { RepositoryUser } from "../repositories/RepositoryUser";
 import { NutritionGoalCalculatorService } from "./services/NutritionGoalCalculatorService";
 
@@ -37,7 +42,9 @@ export class UserPlanHandler {
     validateUserData(hydratedUserData as PlanDataUserCommand);
 
     const dietType = resolveDietType(command.dietType, userData.kindOfDiet);
+    const week = resolvePlanWeek(command.week);
     validateDietType(dietType);
+    validatePlanWeek(week);
 
     const result = await this.completePlanGenerator(
       hydratedUserData as PlanDataUserCommand,
@@ -45,7 +52,14 @@ export class UserPlanHandler {
     );
 
     if (result.dietPlan) {
-      await this.repositoryUser.saveDietPlan(command.userId, result.dietPlan, dietType);
+      await this.repositoryUser.saveDietPlan(
+        command.userId,
+        result.dietPlan,
+        dietType,
+        {
+          week,
+        },
+      );
     }
 
     if (result.workoutPlan) {
@@ -56,6 +70,8 @@ export class UserPlanHandler {
       result.shoppingList = await this.repositoryUser.saveShoppingList(
         command.userId,
         result.shoppingList,
+        dietType,
+        week,
       );
     }
 
@@ -73,3 +89,7 @@ const resolveDietType = (
 
   return savedDietType === "single-food" ? "single-food" : "recipes";
 };
+
+const resolvePlanWeek = (requestedWeek?: PlanWeek): PlanWeek => (
+  requestedWeek === "next" ? "next" : "current"
+);

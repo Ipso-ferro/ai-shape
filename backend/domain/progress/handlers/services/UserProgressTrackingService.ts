@@ -462,7 +462,13 @@ export class UserProgressTrackingService {
   async trackMeal(command: TrackMealProgressCommand): Promise<UserProgressDay> {
     const date = normaliseDate(command.date);
     const user = await this.getUser(command.userId);
-    const dietPlan = await this.repositoryUser.getDietPlan(command.userId);
+    const selectedDietType = command.dietType ?? (
+      user.kindOfDiet === "single-food" ? "single-food" : "recipes"
+    );
+    const dietPlan = await this.repositoryUser.getDietPlan(command.userId, {
+      dietType: selectedDietType,
+      week: command.week,
+    });
 
     if (!dietPlan) {
       throw new NotFoundError(`Diet plan for user "${command.userId}" was not found.`);
@@ -489,7 +495,17 @@ export class UserProgressTrackingService {
       },
     });
 
-    return this.repositoryUser.saveUserProgressDay(nextDay);
+    const savedDay = await this.repositoryUser.saveUserProgressDay(nextDay);
+    await this.repositoryUser.syncDietPlanMealEatenState(
+      command.userId,
+      selectedDietType,
+      nextDay.planDayNumber,
+      command.mealSlot,
+      command.completed,
+      command.week,
+    );
+
+    return savedDay;
   }
 
   async trackWorkout(command: TrackWorkoutProgressCommand): Promise<UserProgressDay> {
@@ -519,7 +535,14 @@ export class UserProgressTrackingService {
       workout: resolveWorkoutStatus(workoutDay, command.completed),
     });
 
-    return this.repositoryUser.saveUserProgressDay(nextDay);
+    const savedDay = await this.repositoryUser.saveUserProgressDay(nextDay);
+    await this.repositoryUser.syncWorkoutPlanDayCompletionState(
+      command.userId,
+      nextDay.planDayNumber,
+      nextDay.workout.completed,
+    );
+
+    return savedDay;
   }
 
   async getDay(query: GetUserProgressDayQuery): Promise<UserProgressDay> {

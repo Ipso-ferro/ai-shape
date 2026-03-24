@@ -88,6 +88,7 @@ export class UserController {
       const command: GenerateCompletePlanCommand = {
         userId: req.params.id,
         dietType: req.body?.dietType,
+        week: req.body?.week,
       };
 
       const result = await this.userPlanHandler.generateCompletePlan(command);

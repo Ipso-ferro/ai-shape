@@ -14,3 +14,8 @@ export type GenerateCompletePlanRequestBody = Omit<
 export interface UserRouteParams {
   id: string;
 }
+
+export interface PlanSelectionQuery {
+  dietType?: string;
+  week?: string;
+}

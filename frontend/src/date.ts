@@ -1,60 +1,63 @@
 import { WeekDay } from "./types";
 
-const weekdayNames = [
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-  "Sunday",
-];
+const weekLabels = [
+  { label: "Monday", shortLabel: "Mon" },
+  { label: "Tuesday", shortLabel: "Tue" },
+  { label: "Wednesday", shortLabel: "Wed" },
+  { label: "Thursday", shortLabel: "Thu" },
+  { label: "Friday", shortLabel: "Fri" },
+  { label: "Saturday", shortLabel: "Sat" },
+  { label: "Sunday", shortLabel: "Sun" },
+] as const;
 
-const toDateKey = (date: Date): string => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
+const toDateKey = (value: Date): string => {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
 
   return `${year}-${month}-${day}`;
 };
 
-const fromDateKey = (value: string): Date => {
-  const [yearText, monthText, dayText] = value.split("-");
-  return new Date(Number(yearText), Number(monthText) - 1, Number(dayText));
+const toMonthKey = (value: Date): string => {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+
+  return `${year}-${month}`;
 };
 
 export const todayKey = (): string => toDateKey(new Date());
+export const monthKey = (value = new Date()): string => toMonthKey(value);
+export const isSunday = (value = new Date()): boolean => value.getDay() === 0;
 
-export const humanDate = (date: string): string => (
-  new Intl.DateTimeFormat("en-US", {
+export const formatNumber = (value: number): string => (
+  new Intl.NumberFormat("en-US").format(Math.round(value))
+);
+
+export const humanDate = (date: string): string => {
+  const value = new Date(`${date}T00:00:00`);
+
+  return new Intl.DateTimeFormat("en-US", {
     weekday: "long",
     month: "short",
     day: "numeric",
-  }).format(fromDateKey(date))
-);
+  }).format(value);
+};
 
 export const getCurrentWeek = (referenceDate = new Date()): WeekDay[] => {
   const cursor = new Date(referenceDate);
-  const weekday = cursor.getDay();
-  const diffToMonday = weekday === 0 ? -6 : 1 - weekday;
-  cursor.setDate(cursor.getDate() + diffToMonday);
-  cursor.setHours(0, 0, 0, 0);
+  const dayOfWeek = cursor.getDay();
+  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  cursor.setDate(cursor.getDate() + mondayOffset);
 
-  return Array.from({ length: 7 }, (_, index) => {
-    const next = new Date(cursor);
-    next.setDate(cursor.getDate() + index);
+  return weekLabels.map((item, index) => {
+    const day = new Date(cursor);
+    day.setDate(cursor.getDate() + index);
 
     return {
-      date: toDateKey(next),
       dayNumber: index + 1,
-      dayName: weekdayNames[index],
-      shortLabel: new Intl.DateTimeFormat("en-US", {
-        weekday: "short",
-      }).format(next),
+      date: toDateKey(day),
+      label: item.label,
+      shortLabel: item.shortLabel,
     };
   });
 };
-
-export const formatNumber = (value: number): string => (
-  new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value)
-);

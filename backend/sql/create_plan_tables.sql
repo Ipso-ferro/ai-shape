@@ -1,7 +1,10 @@
 USE ai_shape;
 
 CREATE TABLE IF NOT EXISTS user_diet_plan (
+  id CHAR(36) NOT NULL,
   user_id CHAR(36) NOT NULL,
+  plan_week VARCHAR(20) NOT NULL DEFAULT 'current',
+  summary JSON DEFAULT NULL,
   day_number TINYINT UNSIGNED NOT NULL,
   day_name VARCHAR(20) NOT NULL,
   breakfast JSON NOT NULL,
@@ -10,16 +13,26 @@ CREATE TABLE IF NOT EXISTS user_diet_plan (
   dinner JSON NOT NULL,
   snack_2 JSON NOT NULL,
   supplements JSON NOT NULL,
+  breakfast_eaten BOOLEAN NOT NULL DEFAULT FALSE,
+  snack_1_eaten BOOLEAN NOT NULL DEFAULT FALSE,
+  lunch_eaten BOOLEAN NOT NULL DEFAULT FALSE,
+  dinner_eaten BOOLEAN NOT NULL DEFAULT FALSE,
+  snack_2_eaten BOOLEAN NOT NULL DEFAULT FALSE,
+  supplements_eaten BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (user_id, day_number),
+  PRIMARY KEY (user_id, plan_week, day_number),
+  UNIQUE KEY uk_user_diet_plan_id (id),
   CONSTRAINT fk_user_diet_plan_user
     FOREIGN KEY (user_id) REFERENCES users(id)
     ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS user_recipe_plan (
+  id CHAR(36) NOT NULL,
   user_id CHAR(36) NOT NULL,
+  plan_week VARCHAR(20) NOT NULL DEFAULT 'current',
+  summary JSON DEFAULT NULL,
   day_number TINYINT UNSIGNED NOT NULL,
   day_name VARCHAR(20) NOT NULL,
   breakfast JSON NOT NULL,
@@ -28,15 +41,23 @@ CREATE TABLE IF NOT EXISTS user_recipe_plan (
   dinner JSON NOT NULL,
   snack_2 JSON NOT NULL,
   supplements JSON NOT NULL,
+  breakfast_eaten BOOLEAN NOT NULL DEFAULT FALSE,
+  snack_1_eaten BOOLEAN NOT NULL DEFAULT FALSE,
+  lunch_eaten BOOLEAN NOT NULL DEFAULT FALSE,
+  dinner_eaten BOOLEAN NOT NULL DEFAULT FALSE,
+  snack_2_eaten BOOLEAN NOT NULL DEFAULT FALSE,
+  supplements_eaten BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (user_id, day_number),
+  PRIMARY KEY (user_id, plan_week, day_number),
+  UNIQUE KEY uk_user_recipe_plan_id (id),
   CONSTRAINT fk_user_recipe_plan_user
     FOREIGN KEY (user_id) REFERENCES users(id)
     ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS user_workout_plan_days (
+  id CHAR(36) NOT NULL,
   user_id CHAR(36) NOT NULL,
   day_number TINYINT UNSIGNED NOT NULL,
   day_name VARCHAR(20) NOT NULL,
@@ -47,28 +68,50 @@ CREATE TABLE IF NOT EXISTS user_workout_plan_days (
   total_duration VARCHAR(50) NOT NULL,
   estimated_calories_burned INT UNSIGNED NOT NULL DEFAULT 0,
   estimated_kilojoules_burned INT UNSIGNED NOT NULL DEFAULT 0,
+  complete BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (user_id, day_number),
+  UNIQUE KEY uk_user_workout_plan_days_id (id),
   CONSTRAINT fk_user_workout_plan_days_user
     FOREIGN KEY (user_id) REFERENCES users(id)
     ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS user_shopping_list (
+CREATE TABLE IF NOT EXISTS shopping_market_single_food_list (
+  id CHAR(36) NOT NULL,
   user_id CHAR(36) NOT NULL,
+  plan_week VARCHAR(20) NOT NULL DEFAULT 'current',
   days_covered TINYINT UNSIGNED NOT NULL DEFAULT 7,
   shopping_list JSON NOT NULL,
   checked_items JSON DEFAULT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (user_id),
-  CONSTRAINT fk_user_shopping_list_user
+  PRIMARY KEY (user_id, plan_week),
+  UNIQUE KEY uk_shopping_market_single_food_list_id (id),
+  CONSTRAINT fk_shopping_market_single_food_list_user
+    FOREIGN KEY (user_id) REFERENCES users(id)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS shopping_market_recipes_list (
+  id CHAR(36) NOT NULL,
+  user_id CHAR(36) NOT NULL,
+  plan_week VARCHAR(20) NOT NULL DEFAULT 'current',
+  days_covered TINYINT UNSIGNED NOT NULL DEFAULT 7,
+  shopping_list JSON NOT NULL,
+  checked_items JSON DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, plan_week),
+  UNIQUE KEY uk_shopping_market_recipes_list_id (id),
+  CONSTRAINT fk_shopping_market_recipes_list_user
     FOREIGN KEY (user_id) REFERENCES users(id)
     ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS user_progress_tracking (
+  id CHAR(36) NOT NULL,
   user_id CHAR(36) NOT NULL,
   tracked_on DATE NOT NULL,
   plan_day_number TINYINT UNSIGNED NOT NULL,
@@ -109,6 +152,7 @@ CREATE TABLE IF NOT EXISTS user_progress_tracking (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (user_id, tracked_on),
+  UNIQUE KEY uk_user_progress_tracking_id (id),
   CONSTRAINT fk_user_progress_tracking_user
     FOREIGN KEY (user_id) REFERENCES users(id)
     ON DELETE CASCADE

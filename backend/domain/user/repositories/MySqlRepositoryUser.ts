@@ -4,6 +4,7 @@ import {
   ResultSetHeader,
   RowDataPacket,
 } from "mysql2/promise";
+import { randomUUID } from "node:crypto";
 import {
   AppErrors,
   ConflictError,
@@ -20,9 +21,14 @@ import { GetUserCredentialsByEmailQuery } from "../queries/GetUserCredentialsByE
 import {
   DietPlanEntry,
   DietPlan,
+  DietPlanDayMealState,
   DietType,
   EnergyUnit,
+  PlanSelectionOptions,
+  PlanWeek,
+  SaveDietPlanOptions,
   ShoppingList,
+  TrackableMealSlot,
   UserProgressDay,
   UserProgressMealStatus,
   WorkoutExercise,
@@ -68,6 +74,8 @@ interface UserCredentialsRow extends RowDataPacket {
 }
 
 interface DietPlanDayRow extends RowDataPacket {
+  plan_week: string;
+  summary: DietPlan["summary"] | string | null;
   day_number: number | string;
   day_name: string;
   breakfast: DietPlanEntry | string;
@@ -76,6 +84,12 @@ interface DietPlanDayRow extends RowDataPacket {
   dinner: DietPlanEntry | string;
   snack_2: DietPlanEntry | string;
   supplements: DietPlanEntry[] | string;
+  breakfast_eaten: number | boolean | null;
+  snack_1_eaten: number | boolean | null;
+  lunch_eaten: number | boolean | null;
+  dinner_eaten: number | boolean | null;
+  snack_2_eaten: number | boolean | null;
+  supplements_eaten: number | boolean | null;
 }
 
 interface UserPlanStateRow extends RowDataPacket {
@@ -138,6 +152,7 @@ interface UserProgressTrackingRow extends RowDataPacket {
 
 interface UserShoppingListRow extends RowDataPacket {
   user_id: string;
+  plan_week: string;
   days_covered: number | string;
   shopping_list: ShoppingList | string;
   checked_items: string[] | string | null;
@@ -209,6 +224,30 @@ const toNumber = (value: number | string | null, fallback = 0): number => {
   if (typeof value === "string") {
     const parsedValue = Number(value);
     return Number.isFinite(parsedValue) ? parsedValue : fallback;
+  }
+
+  return fallback;
+};
+
+const toBoolean = (value: number | boolean | string | null, fallback = false): boolean => {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+
+  if (typeof value === "string") {
+    const normalizedValue = value.trim().toLowerCase();
+
+    if (normalizedValue === "1" || normalizedValue === "true") {
+      return true;
+    }
+
+    if (normalizedValue === "0" || normalizedValue === "false") {
+      return false;
+    }
   }
 
   return fallback;
@@ -380,6 +419,12 @@ const assertFiniteNumber = (value: number, fieldName: string): void => {
   }
 };
 
+const assertPositiveInteger = (value: number, fieldName: string): void => {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new ValidationError(`"${fieldName}" must be a positive integer.`);
+  }
+};
+
 const assertStringArray = (value: string[], fieldName: string): void => {
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
     throw new ValidationError(`"${fieldName}" must be an array of strings.`);
@@ -389,6 +434,12 @@ const assertStringArray = (value: string[], fieldName: string): void => {
 const assertBoolean = (value: boolean, fieldName: string): void => {
   if (typeof value !== "boolean") {
     throw new ValidationError(`"${fieldName}" must be a boolean.`);
+  }
+};
+
+const assertPlanWeek = (value: PlanWeek): void => {
+  if (value !== "current" && value !== "next") {
+    throw new ValidationError(`Unsupported plan week "${value}".`);
   }
 };
 
@@ -543,6 +594,26 @@ const createEmptyDietEntry = (): DietPlanEntry => ({
   kilojoules: 0,
 });
 
+const createEmptyDietMealState = (): DietPlanDayMealState => ({
+  breakfast: false,
+  snack1: false,
+  lunch: false,
+  dinner: false,
+  snack2: false,
+  supplements: false,
+});
+
+const withDietPlanMealStates = (dietPlan: DietPlan): DietPlan => ({
+  ...dietPlan,
+  days: dietPlan.days.map((day) => ({
+    ...day,
+    eatenMeals: {
+      ...createEmptyDietMealState(),
+      ...day.eatenMeals,
+    },
+  })),
+});
+
 const mapRowsToDietPlan = (
   summary: DietPlan["summary"],
   dayRows: DietPlanDayRow[],
@@ -557,6 +628,14 @@ const mapRowsToDietPlan = (
     dinner: parseJsonValue<DietPlanEntry>(row.dinner, createEmptyDietEntry()),
     snack2: parseJsonValue<DietPlanEntry>(row.snack_2, createEmptyDietEntry()),
     supplements: parseJsonValue<DietPlanEntry[]>(row.supplements, []),
+    eatenMeals: {
+      breakfast: toBoolean(row.breakfast_eaten),
+      snack1: toBoolean(row.snack_1_eaten),
+      lunch: toBoolean(row.lunch_eaten),
+      dinner: toBoolean(row.dinner_eaten),
+      snack2: toBoolean(row.snack_2_eaten),
+      supplements: toBoolean(row.supplements_eaten),
+    },
   })),
 });
 
@@ -681,6 +760,39 @@ const resolveDietStorageTable = (dietType: DietType): string => (
   dietType === "recipes" ? "user_recipe_plan" : "user_diet_plan"
 );
 
+const resolveShoppingStorageTable = (dietType: DietType): string => (
+  dietType === "recipes"
+    ? "shopping_market_recipes_list"
+    : "shopping_market_single_food_list"
+);
+
+const resolvePlanWeek = (requestedWeek?: PlanWeek): PlanWeek => (
+  requestedWeek === "next" ? "next" : "current"
+);
+
+const resolveStoredDietType = (storedDietType?: string | null): DietType => (
+  storedDietType === "single-food" ? "single-food" : "recipes"
+);
+
+const resolveDietMealStateColumn = (mealSlot: TrackableMealSlot): string => {
+  switch (mealSlot) {
+    case "breakfast":
+      return "breakfast_eaten";
+    case "snack1":
+      return "snack_1_eaten";
+    case "lunch":
+      return "lunch_eaten";
+    case "dinner":
+      return "dinner_eaten";
+    case "snack2":
+      return "snack_2_eaten";
+    case "supplements":
+      return "supplements_eaten";
+    default:
+      throw new ValidationError(`Unsupported meal slot "${mealSlot}".`);
+  }
+};
+
 export class MySqlRepositoryUser implements RepositoryUser {
   constructor(private readonly pool: Pool = mysqlPool) {}
 
@@ -701,6 +813,23 @@ export class MySqlRepositoryUser implements RepositoryUser {
     if (rows.length === 0) {
       throw new NotFoundError(`User with id "${userId}" was not found.`);
     }
+  }
+
+  private async getStoredUserPlanState(userId: string): Promise<UserPlanStateRow | null> {
+    const [rows] = await this.pool.execute<UserPlanStateRow[]>(
+      `
+        SELECT
+          kind_of_diet,
+          diet_plan_summary,
+          workout_plan_overview
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+      `,
+      [userId],
+    );
+
+    return rows[0] ?? null;
   }
 
   private async resetUserTrackingIfNeeded(userId: string): Promise<void> {
@@ -989,9 +1118,14 @@ export class MySqlRepositoryUser implements RepositoryUser {
     userId: string,
     dietPlan: DietPlan,
     dietType: DietType,
+    options?: SaveDietPlanOptions,
   ): Promise<DietPlan> {
     assertNonEmptyString(userId, "userId");
     assertDietPlan(dietPlan);
+
+    const planWeek = resolvePlanWeek(options?.week);
+    const activateDietType = options?.activateDietType !== false;
+    assertPlanWeek(planWeek);
 
     const connection = await this.pool.getConnection();
     const storageTable = resolveDietStorageTable(dietType);
@@ -1000,42 +1134,40 @@ export class MySqlRepositoryUser implements RepositoryUser {
       await connection.beginTransaction();
       await this.ensureUserExists(connection, userId);
 
-      await connection.execute<ResultSetHeader>(
-        `
-          UPDATE users
-          SET
-            kind_of_diet = ?,
-            diet_plan_summary = ?
-          WHERE id = ?
-        `,
-        [
-          dietType,
-          JSON.stringify(dietPlan.summary),
-          userId,
-        ],
-      );
+      if (planWeek === "current" && activateDietType) {
+        await connection.execute<ResultSetHeader>(
+          `
+            UPDATE users
+            SET
+              kind_of_diet = ?,
+              diet_plan_summary = ?
+            WHERE id = ?
+          `,
+          [
+            dietType,
+            JSON.stringify(dietPlan.summary),
+            userId,
+          ],
+        );
+      }
 
       await connection.execute<ResultSetHeader>(
         `
-          DELETE FROM user_diet_plan
+          DELETE FROM ${storageTable}
           WHERE user_id = ?
+            AND plan_week = ?
         `,
-        [userId],
-      );
-
-      await connection.execute<ResultSetHeader>(
-        `
-          DELETE FROM user_recipe_plan
-          WHERE user_id = ?
-        `,
-        [userId],
+        [userId, planWeek],
       );
 
       for (const day of dietPlan.days) {
         await connection.execute<ResultSetHeader>(
           `
             INSERT INTO ${storageTable} (
+              id,
               user_id,
+              plan_week,
+              summary,
               day_number,
               day_name,
               breakfast,
@@ -1043,12 +1175,21 @@ export class MySqlRepositoryUser implements RepositoryUser {
               lunch,
               dinner,
               snack_2,
-              supplements
+              supplements,
+              breakfast_eaten,
+              snack_1_eaten,
+              lunch_eaten,
+              dinner_eaten,
+              snack_2_eaten,
+              supplements_eaten
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
           [
+            randomUUID(),
             userId,
+            planWeek,
+            JSON.stringify(dietPlan.summary),
             day.day,
             day.dayName,
             JSON.stringify(day.breakfast),
@@ -1057,12 +1198,18 @@ export class MySqlRepositoryUser implements RepositoryUser {
             JSON.stringify(day.dinner),
             JSON.stringify(day.snack2),
             JSON.stringify(day.supplements),
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
           ],
         );
       }
 
       await connection.commit();
-      return dietPlan;
+      return withDietPlanMealStates(dietPlan);
     } catch (error) {
       await connection.rollback();
       return handleRepositoryError(error);
@@ -1071,41 +1218,28 @@ export class MySqlRepositoryUser implements RepositoryUser {
     }
   }
 
-  async getDietPlan(userId: string): Promise<DietPlan | null> {
+  async getDietPlan(
+    userId: string,
+    options?: PlanSelectionOptions,
+  ): Promise<DietPlan | null> {
     assertNonEmptyString(userId, "userId");
 
     try {
-      const [userRows] = await this.pool.execute<UserPlanStateRow[]>(
-        `
-          SELECT
-            kind_of_diet,
-            diet_plan_summary
-          FROM users
-          WHERE id = ?
-          LIMIT 1
-        `,
-        [userId],
-      );
+      const userState = await this.getStoredUserPlanState(userId);
 
-      if (userRows.length === 0) {
+      if (!userState) {
         return null;
       }
 
-      const summary = parseJsonValue<DietPlan["summary"] | null>(
-        userRows[0].diet_plan_summary,
-        null,
-      );
-
-      if (!summary) {
-        return null;
-      }
-
-      const dietType = userRows[0].kind_of_diet === "recipes" ? "recipes" : "single-food";
+      const dietType = options?.dietType ?? resolveStoredDietType(userState.kind_of_diet);
+      const planWeek = resolvePlanWeek(options?.week);
       const storageTable = resolveDietStorageTable(dietType);
 
       const [dayRows] = await this.pool.execute<DietPlanDayRow[]>(
         `
           SELECT
+            plan_week,
+            summary,
             day_number,
             day_name,
             breakfast,
@@ -1113,15 +1247,33 @@ export class MySqlRepositoryUser implements RepositoryUser {
             lunch,
             dinner,
             snack_2,
-            supplements
+            supplements,
+            breakfast_eaten,
+            snack_1_eaten,
+            lunch_eaten,
+            dinner_eaten,
+            snack_2_eaten,
+            supplements_eaten
           FROM ${storageTable}
           WHERE user_id = ?
+            AND plan_week = ?
           ORDER BY day_number ASC
         `,
-        [userId],
+        [userId, planWeek],
       );
 
       if (dayRows.length === 0) {
+        return null;
+      }
+
+      const summary = parseJsonValue<DietPlan["summary"] | null>(
+        dayRows[0].summary,
+        planWeek === "current"
+          ? parseJsonValue<DietPlan["summary"] | null>(userState.diet_plan_summary, null)
+          : null,
+      );
+
+      if (!summary) {
         return null;
       }
 
@@ -1169,6 +1321,7 @@ export class MySqlRepositoryUser implements RepositoryUser {
         await connection.execute<ResultSetHeader>(
           `
             INSERT INTO user_workout_plan_days (
+              id,
               user_id,
               day_number,
               day_name,
@@ -1178,11 +1331,13 @@ export class MySqlRepositoryUser implements RepositoryUser {
               cool_down,
               total_duration,
               estimated_calories_burned,
-              estimated_kilojoules_burned
+              estimated_kilojoules_burned,
+              complete
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
           [
+            randomUUID(),
             userId,
             day.day,
             day.dayName,
@@ -1193,6 +1348,7 @@ export class MySqlRepositoryUser implements RepositoryUser {
             day.totalDuration,
             day.estimatedCaloriesBurned ?? 0,
             day.estimatedKilojoulesBurned ?? 0,
+            false,
           ],
         );
       }
@@ -1267,19 +1423,27 @@ export class MySqlRepositoryUser implements RepositoryUser {
   async saveShoppingList(
     userId: string,
     shoppingList: ShoppingList,
+    dietType: DietType,
+    week: PlanWeek = "current",
   ): Promise<ShoppingList> {
     assertNonEmptyString(userId, "userId");
+    assertPlanWeek(week);
+
+    const storageTable = resolveShoppingStorageTable(dietType);
+    const planWeek = resolvePlanWeek(week);
 
     try {
       const [existingRows] = await this.pool.execute<UserShoppingListRow[]>(
         `
           SELECT
+            plan_week,
             checked_items
-          FROM user_shopping_list
+          FROM ${storageTable}
           WHERE user_id = ?
+            AND plan_week = ?
           LIMIT 1
         `,
-        [userId],
+        [userId, planWeek],
       );
       const validItemIds = collectShoppingItemIds(shoppingList);
       const preservedCheckedItems = toStringArray(existingRows[0]?.checked_items).filter((itemId) => (
@@ -1288,20 +1452,24 @@ export class MySqlRepositoryUser implements RepositoryUser {
 
       await this.pool.execute<ResultSetHeader>(
         `
-          INSERT INTO user_shopping_list (
+          INSERT INTO ${storageTable} (
+            id,
             user_id,
+            plan_week,
             days_covered,
             shopping_list,
             checked_items
           )
-          VALUES (?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?)
           ON DUPLICATE KEY UPDATE
             days_covered = VALUES(days_covered),
             shopping_list = VALUES(shopping_list),
             checked_items = VALUES(checked_items)
         `,
         [
+          randomUUID(),
           userId,
+          planWeek,
           shoppingList.metadata.daysCovered ?? 7,
           JSON.stringify(shoppingList),
           JSON.stringify(preservedCheckedItems),
@@ -1314,22 +1482,36 @@ export class MySqlRepositoryUser implements RepositoryUser {
     }
   }
 
-  async getShoppingList(userId: string): Promise<ShoppingList | null> {
+  async getShoppingList(
+    userId: string,
+    options?: PlanSelectionOptions,
+  ): Promise<ShoppingList | null> {
     assertNonEmptyString(userId, "userId");
 
     try {
+      const userState = await this.getStoredUserPlanState(userId);
+
+      if (!userState && !options?.dietType) {
+        return null;
+      }
+
+      const dietType = options?.dietType ?? resolveStoredDietType(userState?.kind_of_diet);
+      const storageTable = resolveShoppingStorageTable(dietType);
+      const planWeek = resolvePlanWeek(options?.week);
       const [rows] = await this.pool.execute<UserShoppingListRow[]>(
         `
           SELECT
             user_id,
+            plan_week,
             days_covered,
             shopping_list,
             checked_items
-          FROM user_shopping_list
+          FROM ${storageTable}
           WHERE user_id = ?
+            AND plan_week = ?
           LIMIT 1
         `,
-        [userId],
+        [userId, planWeek],
       );
 
       return rows.length > 0 ? mapRowToShoppingList(rows[0]) : null;
@@ -1342,23 +1524,35 @@ export class MySqlRepositoryUser implements RepositoryUser {
     userId: string,
     itemId: string,
     checked: boolean,
+    options?: PlanSelectionOptions,
   ): Promise<ShoppingList> {
     assertNonEmptyString(userId, "userId");
     assertNonEmptyString(itemId, "itemId");
 
     try {
+      const userState = await this.getStoredUserPlanState(userId);
+
+      if (!userState && !options?.dietType) {
+        throw new NotFoundError(`User with id "${userId}" was not found.`);
+      }
+
+      const dietType = options?.dietType ?? resolveStoredDietType(userState?.kind_of_diet);
+      const storageTable = resolveShoppingStorageTable(dietType);
+      const planWeek = resolvePlanWeek(options?.week);
       const [rows] = await this.pool.execute<UserShoppingListRow[]>(
         `
           SELECT
             user_id,
+            plan_week,
             days_covered,
             shopping_list,
             checked_items
-          FROM user_shopping_list
+          FROM ${storageTable}
           WHERE user_id = ?
+            AND plan_week = ?
           LIMIT 1
         `,
-        [userId],
+        [userId, planWeek],
       );
 
       if (rows.length === 0) {
@@ -1384,13 +1578,15 @@ export class MySqlRepositoryUser implements RepositoryUser {
 
       await this.pool.execute<ResultSetHeader>(
         `
-          UPDATE user_shopping_list
+          UPDATE ${storageTable}
           SET checked_items = ?
           WHERE user_id = ?
+            AND plan_week = ?
         `,
         [
           JSON.stringify(serializedCheckedItems),
           userId,
+          planWeek,
         ],
       );
 
@@ -1408,6 +1604,7 @@ export class MySqlRepositoryUser implements RepositoryUser {
       await this.pool.execute<ResultSetHeader>(
         `
           INSERT INTO user_progress_tracking (
+            id,
             user_id,
             tracked_on,
             plan_day_number,
@@ -1446,7 +1643,7 @@ export class MySqlRepositoryUser implements RepositoryUser {
             meals_completed_count,
             workouts_completed_count
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON DUPLICATE KEY UPDATE
             plan_day_number = VALUES(plan_day_number),
             plan_day_name = VALUES(plan_day_name),
@@ -1485,6 +1682,7 @@ export class MySqlRepositoryUser implements RepositoryUser {
             workouts_completed_count = VALUES(workouts_completed_count)
         `,
         [
+          randomUUID(),
           progressDay.userId,
           progressDay.date,
           progressDay.planDayNumber,
@@ -1528,6 +1726,86 @@ export class MySqlRepositoryUser implements RepositoryUser {
       await this.syncTrackingSummaries(progressDay);
 
       return progressDay;
+    } catch (error) {
+      return handleRepositoryError(error);
+    }
+  }
+
+  async syncDietPlanMealEatenState(
+    userId: string,
+    dietType: DietType,
+    dayNumber: number,
+    mealSlot: TrackableMealSlot,
+    eaten: boolean,
+    week: PlanWeek = "current",
+  ): Promise<void> {
+    assertNonEmptyString(userId, "userId");
+    assertNonEmptyString(dietType, "dietType");
+    assertPositiveInteger(dayNumber, "dayNumber");
+    assertNonEmptyString(mealSlot, "mealSlot");
+    assertBoolean(eaten, "eaten");
+    assertPlanWeek(week);
+
+    const planWeek = resolvePlanWeek(week);
+    const stateColumn = resolveDietMealStateColumn(mealSlot);
+    const storageTable = resolveDietStorageTable(dietType);
+
+    try {
+      const [result] = await this.pool.execute<ResultSetHeader>(
+        `
+          UPDATE ${storageTable}
+          SET ${stateColumn} = ?
+          WHERE user_id = ?
+            AND plan_week = ?
+            AND day_number = ?
+        `,
+        [
+          eaten,
+          userId,
+          planWeek,
+          dayNumber,
+        ],
+      );
+
+      if (result.affectedRows === 0) {
+        throw new NotFoundError(
+          `Diet plan meal "${mealSlot}" for day "${dayNumber}" and user "${userId}" was not found in "${storageTable}".`,
+        );
+      }
+    } catch (error) {
+      return handleRepositoryError(error);
+    }
+  }
+
+  async syncWorkoutPlanDayCompletionState(
+    userId: string,
+    dayNumber: number,
+    completed: boolean,
+  ): Promise<void> {
+    assertNonEmptyString(userId, "userId");
+    assertPositiveInteger(dayNumber, "dayNumber");
+    assertBoolean(completed, "completed");
+
+    try {
+      const [result] = await this.pool.execute<ResultSetHeader>(
+        `
+          UPDATE user_workout_plan_days
+          SET complete = ?
+          WHERE user_id = ?
+            AND day_number = ?
+        `,
+        [
+          completed,
+          userId,
+          dayNumber,
+        ],
+      );
+
+      if (result.affectedRows === 0) {
+        throw new NotFoundError(
+          `Workout plan day "${dayNumber}" for user "${userId}" was not found.`,
+        );
+      }
     } catch (error) {
       return handleRepositoryError(error);
     }

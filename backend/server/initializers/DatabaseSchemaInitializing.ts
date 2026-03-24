@@ -3,7 +3,10 @@ import { mysqlPool } from "../pool";
 
 const createDietStorageTableStatement = (tableName: string): string => `
   CREATE TABLE IF NOT EXISTS ${tableName} (
+    id CHAR(36) NOT NULL,
     user_id CHAR(36) NOT NULL,
+    plan_week VARCHAR(20) NOT NULL DEFAULT 'current',
+    summary JSON NULL,
     day_number TINYINT UNSIGNED NOT NULL,
     day_name VARCHAR(20) NOT NULL,
     breakfast JSON NOT NULL,
@@ -12,9 +15,17 @@ const createDietStorageTableStatement = (tableName: string): string => `
     dinner JSON NOT NULL,
     snack_2 JSON NOT NULL,
     supplements JSON NOT NULL,
+    breakfast_eaten BOOLEAN NOT NULL DEFAULT FALSE,
+    snack_1_eaten BOOLEAN NOT NULL DEFAULT FALSE,
+    lunch_eaten BOOLEAN NOT NULL DEFAULT FALSE,
+    dinner_eaten BOOLEAN NOT NULL DEFAULT FALSE,
+    snack_2_eaten BOOLEAN NOT NULL DEFAULT FALSE,
+    supplements_eaten BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (user_id, day_number),
+    PRIMARY KEY (user_id, plan_week, day_number),
+    UNIQUE KEY uk_${tableName}_id (id),
+    KEY idx_${tableName}_week (user_id, plan_week),
     CONSTRAINT fk_${tableName}_user
       FOREIGN KEY (user_id) REFERENCES users(id)
       ON DELETE CASCADE
@@ -23,6 +34,7 @@ const createDietStorageTableStatement = (tableName: string): string => `
 
 const createWorkoutPlanDaysTableStatement = `
   CREATE TABLE IF NOT EXISTS user_workout_plan_days (
+    id CHAR(36) NOT NULL,
     user_id CHAR(36) NOT NULL,
     day_number TINYINT UNSIGNED NOT NULL,
     day_name VARCHAR(20) NOT NULL,
@@ -33,9 +45,11 @@ const createWorkoutPlanDaysTableStatement = `
     total_duration VARCHAR(50) NOT NULL,
     estimated_calories_burned INT UNSIGNED NOT NULL DEFAULT 0,
     estimated_kilojoules_burned INT UNSIGNED NOT NULL DEFAULT 0,
+    complete BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, day_number),
+    UNIQUE KEY uk_user_workout_plan_days_id (id),
     CONSTRAINT fk_user_workout_plan_days_user
       FOREIGN KEY (user_id) REFERENCES users(id)
       ON DELETE CASCADE
@@ -44,6 +58,7 @@ const createWorkoutPlanDaysTableStatement = `
 
 const createUserProgressTrackingTableStatement = `
   CREATE TABLE IF NOT EXISTS user_progress_tracking (
+    id CHAR(36) NOT NULL,
     user_id CHAR(36) NOT NULL,
     tracked_on DATE NOT NULL,
     plan_day_number TINYINT UNSIGNED NOT NULL,
@@ -84,6 +99,7 @@ const createUserProgressTrackingTableStatement = `
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, tracked_on),
+    UNIQUE KEY uk_user_progress_tracking_id (id),
     CONSTRAINT fk_user_progress_tracking_user
       FOREIGN KEY (user_id) REFERENCES users(id)
       ON DELETE CASCADE
@@ -125,16 +141,20 @@ const createUserTrackingHistoryTableStatement = `
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 `;
 
-const createUserShoppingListTableStatement = `
-  CREATE TABLE IF NOT EXISTS user_shopping_list (
+const createShoppingListTableStatement = (tableName: string): string => `
+  CREATE TABLE IF NOT EXISTS ${tableName} (
+    id CHAR(36) NOT NULL,
     user_id CHAR(36) NOT NULL,
+    plan_week VARCHAR(20) NOT NULL DEFAULT 'current',
     days_covered TINYINT UNSIGNED NOT NULL DEFAULT 7,
     shopping_list JSON NOT NULL,
     checked_items JSON DEFAULT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (user_id),
-    CONSTRAINT fk_user_shopping_list_user
+    PRIMARY KEY (user_id, plan_week),
+    UNIQUE KEY uk_${tableName}_id (id),
+    KEY idx_${tableName}_week (user_id, plan_week),
+    CONSTRAINT fk_${tableName}_user
       FOREIGN KEY (user_id) REFERENCES users(id)
       ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -231,6 +251,80 @@ const ensureVarcharColumn = async (
   );
 };
 
+const ensureBooleanColumn = async (
+  pool: Pool,
+  tableName: string,
+  columnName: string,
+  afterColumn: string,
+): Promise<void> => {
+  if (await columnExists(pool, tableName, columnName)) {
+    return;
+  }
+
+  await pool.query(
+    `
+      ALTER TABLE ${tableName}
+      ADD COLUMN ${columnName} BOOLEAN NOT NULL DEFAULT FALSE AFTER ${afterColumn}
+    `,
+  );
+};
+
+const dropColumnIfExists = async (
+  pool: Pool,
+  tableName: string,
+  columnName: string,
+): Promise<void> => {
+  if (!await columnExists(pool, tableName, columnName)) {
+    return;
+  }
+
+  await pool.query(
+    `
+      ALTER TABLE ${tableName}
+      DROP COLUMN ${columnName}
+    `,
+  );
+};
+
+const ensureStableIdColumn = async (
+  pool: Pool,
+  tableName: string,
+  uniqueIndexName: string,
+): Promise<void> => {
+  if (!await columnExists(pool, tableName, "id")) {
+    await pool.query(
+      `
+        ALTER TABLE ${tableName}
+        ADD COLUMN id CHAR(36) NULL FIRST
+      `,
+    );
+  }
+
+  await pool.query(
+    `
+      UPDATE ${tableName}
+      SET id = UUID()
+      WHERE id IS NULL OR TRIM(id) = ''
+    `,
+  );
+
+  await pool.query(
+    `
+      ALTER TABLE ${tableName}
+      MODIFY COLUMN id CHAR(36) NOT NULL
+    `,
+  );
+
+  if (!await indexExists(pool, tableName, uniqueIndexName)) {
+    await pool.query(
+      `
+        CREATE UNIQUE INDEX ${uniqueIndexName}
+        ON ${tableName} (id)
+      `,
+    );
+  }
+};
+
 const ensureGoogleIdentityColumns = async (pool: Pool): Promise<void> => {
   await ensureVarcharColumn(pool, "users", "google_sub", "VARCHAR(255) NULL", "password");
 
@@ -278,6 +372,50 @@ const ensureWorkoutDayMetricColumns = async (pool: Pool): Promise<void> => {
   }
 };
 
+const ensurePlanRowStateColumns = async (pool: Pool): Promise<void> => {
+  const dietTables = [
+    "user_diet_plan",
+    "user_recipe_plan",
+  ] as const;
+
+  for (const tableName of dietTables) {
+    if (!await tableExists(pool, tableName)) {
+      continue;
+    }
+
+    await ensureStableIdColumn(pool, tableName, `uk_${tableName}_id`);
+    await ensureBooleanColumn(pool, tableName, "breakfast_eaten", "supplements");
+    await ensureBooleanColumn(pool, tableName, "snack_1_eaten", "breakfast_eaten");
+    await ensureBooleanColumn(pool, tableName, "lunch_eaten", "snack_1_eaten");
+    await ensureBooleanColumn(pool, tableName, "dinner_eaten", "lunch_eaten");
+    await ensureBooleanColumn(pool, tableName, "snack_2_eaten", "dinner_eaten");
+    await ensureBooleanColumn(pool, tableName, "supplements_eaten", "snack_2_eaten");
+    await dropColumnIfExists(pool, tableName, "eaten");
+  }
+
+  if (await tableExists(pool, "user_workout_plan_days")) {
+    await ensureStableIdColumn(pool, "user_workout_plan_days", "uk_user_workout_plan_days_id");
+    await ensureBooleanColumn(pool, "user_workout_plan_days", "complete", "estimated_kilojoules_burned");
+  }
+
+  const shoppingTables = [
+    "shopping_market_single_food_list",
+    "shopping_market_recipes_list",
+  ] as const;
+
+  for (const tableName of shoppingTables) {
+    if (!await tableExists(pool, tableName)) {
+      continue;
+    }
+
+    await ensureStableIdColumn(pool, tableName, `uk_${tableName}_id`);
+  }
+
+  if (await tableExists(pool, "user_progress_tracking")) {
+    await ensureStableIdColumn(pool, "user_progress_tracking", "uk_user_progress_tracking_id");
+  }
+};
+
 const migrateLegacyPlanSummaries = async (pool: Pool): Promise<void> => {
   if (await tableExists(pool, "user_diet_plans")) {
     await pool.query(
@@ -311,10 +449,134 @@ const migrateLegacyPlanSummaries = async (pool: Pool): Promise<void> => {
 const migrateLegacyDietDays = async (pool: Pool): Promise<void> => {
   const recipeTableExists = await tableExists(pool, "user_recipe_plan");
   const dietTableExists = await tableExists(pool, "user_diet_plan");
+  const recipeTableHasPlanWeek = recipeTableExists
+    && await columnExists(pool, "user_recipe_plan", "plan_week");
+  const recipeTableHasSummary = recipeTableExists
+    && await columnExists(pool, "user_recipe_plan", "summary");
+  const dietTableHasPlanWeek = dietTableExists
+    && await columnExists(pool, "user_diet_plan", "plan_week");
+  const dietTableHasSummary = dietTableExists
+    && await columnExists(pool, "user_diet_plan", "summary");
+  const recipeTableUpgraded = recipeTableExists
+    && recipeTableHasPlanWeek
+    && recipeTableHasSummary;
+  const dietTableUpgraded = dietTableExists
+    && dietTableHasPlanWeek
+    && dietTableHasSummary;
+
+  if (recipeTableUpgraded && dietTableUpgraded) {
+    return;
+  }
 
   if (recipeTableExists) {
-    await pool.query(createDietStorageTableStatement("user_diet_plan"));
-    await pool.query(createDietStorageTableStatement("user_recipe_plan"));
+    if (!dietTableExists) {
+      await pool.query(createDietStorageTableStatement("user_diet_plan"));
+    } else if (!dietTableUpgraded) {
+      await pool.query("DROP TABLE IF EXISTS user_diet_plan_tmp");
+      await pool.query(createDietStorageTableStatement("user_diet_plan_tmp"));
+      await pool.query(
+        `
+          INSERT INTO user_diet_plan_tmp (
+            id,
+            user_id,
+            plan_week,
+            summary,
+            day_number,
+            day_name,
+            breakfast,
+            snack_1,
+            lunch,
+            dinner,
+            snack_2,
+            supplements,
+            breakfast_eaten,
+            snack_1_eaten,
+            lunch_eaten,
+            dinner_eaten,
+            snack_2_eaten,
+            supplements_eaten
+          )
+          SELECT
+            UUID(),
+            legacy_diet_days.user_id,
+            ${dietTableHasPlanWeek ? "legacy_diet_days.plan_week" : "'current'"},
+            ${dietTableHasSummary ? "COALESCE(legacy_diet_days.summary, users_table.diet_plan_summary)" : "users_table.diet_plan_summary"},
+            legacy_diet_days.day_number,
+            legacy_diet_days.day_name,
+            legacy_diet_days.breakfast,
+            legacy_diet_days.snack_1,
+            legacy_diet_days.lunch,
+            legacy_diet_days.dinner,
+            legacy_diet_days.snack_2,
+            legacy_diet_days.supplements,
+            FALSE,
+            FALSE,
+            FALSE,
+            FALSE,
+            FALSE,
+            FALSE
+          FROM user_diet_plan AS legacy_diet_days
+          LEFT JOIN users AS users_table
+            ON users_table.id = legacy_diet_days.user_id
+        `,
+      );
+      await pool.query("DROP TABLE user_diet_plan");
+      await pool.query("RENAME TABLE user_diet_plan_tmp TO user_diet_plan");
+    }
+
+    if (!recipeTableUpgraded) {
+      await pool.query("DROP TABLE IF EXISTS user_recipe_plan_tmp");
+      await pool.query(createDietStorageTableStatement("user_recipe_plan_tmp"));
+      await pool.query(
+        `
+          INSERT INTO user_recipe_plan_tmp (
+            id,
+            user_id,
+            plan_week,
+            summary,
+            day_number,
+            day_name,
+            breakfast,
+            snack_1,
+            lunch,
+            dinner,
+            snack_2,
+            supplements,
+            breakfast_eaten,
+            snack_1_eaten,
+            lunch_eaten,
+            dinner_eaten,
+            snack_2_eaten,
+            supplements_eaten
+          )
+          SELECT
+            UUID(),
+            legacy_recipe_days.user_id,
+            ${recipeTableHasPlanWeek ? "legacy_recipe_days.plan_week" : "'current'"},
+            ${recipeTableHasSummary ? "COALESCE(legacy_recipe_days.summary, users_table.diet_plan_summary)" : "users_table.diet_plan_summary"},
+            legacy_recipe_days.day_number,
+            legacy_recipe_days.day_name,
+            legacy_recipe_days.breakfast,
+            legacy_recipe_days.snack_1,
+            legacy_recipe_days.lunch,
+            legacy_recipe_days.dinner,
+            legacy_recipe_days.snack_2,
+            legacy_recipe_days.supplements,
+            FALSE,
+            FALSE,
+            FALSE,
+            FALSE,
+            FALSE,
+            FALSE
+          FROM user_recipe_plan AS legacy_recipe_days
+          LEFT JOIN users AS users_table
+            ON users_table.id = legacy_recipe_days.user_id
+        `,
+      );
+      await pool.query("DROP TABLE user_recipe_plan");
+      await pool.query("RENAME TABLE user_recipe_plan_tmp TO user_recipe_plan");
+    }
+
     return;
   }
 
@@ -333,7 +595,10 @@ const migrateLegacyDietDays = async (pool: Pool): Promise<void> => {
   await pool.query(
     `
       INSERT INTO user_diet_plan_tmp (
+        id,
         user_id,
+        plan_week,
+        summary,
         day_number,
         day_name,
         breakfast,
@@ -341,10 +606,19 @@ const migrateLegacyDietDays = async (pool: Pool): Promise<void> => {
         lunch,
         dinner,
         snack_2,
-        supplements
+        supplements,
+        breakfast_eaten,
+        snack_1_eaten,
+        lunch_eaten,
+        dinner_eaten,
+        snack_2_eaten,
+        supplements_eaten
       )
       SELECT
+        UUID(),
         legacy_diet_days.user_id,
+        ${dietTableHasPlanWeek ? "legacy_diet_days.plan_week" : "'current'"},
+        ${dietTableHasSummary ? "COALESCE(legacy_diet_days.summary, users_table.diet_plan_summary)" : "users_table.diet_plan_summary"},
         legacy_diet_days.day_number,
         legacy_diet_days.day_name,
         legacy_diet_days.breakfast,
@@ -352,7 +626,13 @@ const migrateLegacyDietDays = async (pool: Pool): Promise<void> => {
         legacy_diet_days.lunch,
         legacy_diet_days.dinner,
         legacy_diet_days.snack_2,
-        legacy_diet_days.supplements
+        legacy_diet_days.supplements,
+        FALSE,
+        FALSE,
+        FALSE,
+        FALSE,
+        FALSE,
+        FALSE
       FROM user_diet_plan AS legacy_diet_days
       LEFT JOIN users AS users_table
         ON users_table.id = legacy_diet_days.user_id
@@ -367,7 +647,10 @@ const migrateLegacyDietDays = async (pool: Pool): Promise<void> => {
   await pool.query(
     `
       INSERT INTO user_recipe_plan_tmp (
+        id,
         user_id,
+        plan_week,
+        summary,
         day_number,
         day_name,
         breakfast,
@@ -375,10 +658,19 @@ const migrateLegacyDietDays = async (pool: Pool): Promise<void> => {
         lunch,
         dinner,
         snack_2,
-        supplements
+        supplements,
+        breakfast_eaten,
+        snack_1_eaten,
+        lunch_eaten,
+        dinner_eaten,
+        snack_2_eaten,
+        supplements_eaten
       )
       SELECT
+        UUID(),
         legacy_diet_days.user_id,
+        ${dietTableHasPlanWeek ? "legacy_diet_days.plan_week" : "'current'"},
+        ${dietTableHasSummary ? "COALESCE(legacy_diet_days.summary, users_table.diet_plan_summary)" : "users_table.diet_plan_summary"},
         legacy_diet_days.day_number,
         legacy_diet_days.day_name,
         legacy_diet_days.breakfast,
@@ -386,7 +678,13 @@ const migrateLegacyDietDays = async (pool: Pool): Promise<void> => {
         legacy_diet_days.lunch,
         legacy_diet_days.dinner,
         legacy_diet_days.snack_2,
-        legacy_diet_days.supplements
+        legacy_diet_days.supplements,
+        FALSE,
+        FALSE,
+        FALSE,
+        FALSE,
+        FALSE,
+        FALSE
       FROM user_diet_plan AS legacy_diet_days
       INNER JOIN users AS users_table
         ON users_table.id = legacy_diet_days.user_id
@@ -431,6 +729,7 @@ const migrateLegacyWorkoutDays = async (pool: Pool): Promise<void> => {
   await pool.query(
     `
       INSERT INTO user_workout_plan_days_tmp (
+        id,
         user_id,
         day_number,
         day_name,
@@ -438,9 +737,11 @@ const migrateLegacyWorkoutDays = async (pool: Pool): Promise<void> => {
         warm_up,
         exercises,
         cool_down,
-        total_duration
+        total_duration,
+        complete
       )
       SELECT
+        UUID(),
         user_id,
         day_number,
         day_name,
@@ -448,7 +749,8 @@ const migrateLegacyWorkoutDays = async (pool: Pool): Promise<void> => {
         warm_up,
         exercises,
         cool_down,
-        total_duration
+        total_duration,
+        FALSE
       FROM user_workout_plan_days
     `,
   );
@@ -467,19 +769,147 @@ const dropLegacyHeaderTables = async (pool: Pool): Promise<void> => {
   }
 };
 
-const ensureShoppingTrackingColumns = async (pool: Pool): Promise<void> => {
+const migrateLegacyShoppingLists = async (pool: Pool): Promise<void> => {
+  const singleFoodTableName = "shopping_market_single_food_list";
+  const recipeTableName = "shopping_market_recipes_list";
+  const singleFoodTableExists = await tableExists(pool, singleFoodTableName);
+  const recipeTableExists = await tableExists(pool, recipeTableName);
+  const singleFoodTableUpgraded = singleFoodTableExists
+    && await columnExists(pool, singleFoodTableName, "plan_week");
+  const recipeTableUpgraded = recipeTableExists
+    && await columnExists(pool, recipeTableName, "plan_week");
+
+  if (!singleFoodTableExists) {
+    await pool.query(createShoppingListTableStatement(singleFoodTableName));
+  } else if (!singleFoodTableUpgraded) {
+    await pool.query("DROP TABLE IF EXISTS shopping_market_single_food_list_tmp");
+    await pool.query(createShoppingListTableStatement("shopping_market_single_food_list_tmp"));
+    await pool.query(
+      `
+        INSERT INTO shopping_market_single_food_list_tmp (
+          id,
+          user_id,
+          plan_week,
+          days_covered,
+          shopping_list,
+          checked_items
+        )
+        SELECT
+          UUID(),
+          user_id,
+          'current',
+          days_covered,
+          shopping_list,
+          checked_items
+        FROM shopping_market_single_food_list
+      `,
+    );
+    await pool.query("DROP TABLE shopping_market_single_food_list");
+    await pool.query(
+      "RENAME TABLE shopping_market_single_food_list_tmp TO shopping_market_single_food_list",
+    );
+  }
+
+  if (!recipeTableExists) {
+    await pool.query(createShoppingListTableStatement(recipeTableName));
+  } else if (!recipeTableUpgraded) {
+    await pool.query("DROP TABLE IF EXISTS shopping_market_recipes_list_tmp");
+    await pool.query(createShoppingListTableStatement("shopping_market_recipes_list_tmp"));
+    await pool.query(
+      `
+        INSERT INTO shopping_market_recipes_list_tmp (
+          id,
+          user_id,
+          plan_week,
+          days_covered,
+          shopping_list,
+          checked_items
+        )
+        SELECT
+          UUID(),
+          user_id,
+          'current',
+          days_covered,
+          shopping_list,
+          checked_items
+        FROM shopping_market_recipes_list
+      `,
+    );
+    await pool.query("DROP TABLE shopping_market_recipes_list");
+    await pool.query(
+      "RENAME TABLE shopping_market_recipes_list_tmp TO shopping_market_recipes_list",
+    );
+  }
+
   if (!await tableExists(pool, "user_shopping_list")) {
     return;
   }
 
-  if (!await columnExists(pool, "user_shopping_list", "checked_items")) {
-    await pool.query(
-      `
-        ALTER TABLE user_shopping_list
-        ADD COLUMN checked_items JSON NULL AFTER shopping_list
-      `,
-    );
-  }
+  await pool.query(
+    `
+      INSERT INTO shopping_market_single_food_list (
+        id,
+        user_id,
+        plan_week,
+        days_covered,
+        shopping_list,
+        checked_items
+      )
+      SELECT
+        UUID(),
+        legacy_shopping_list.user_id,
+        'current',
+        legacy_shopping_list.days_covered,
+        legacy_shopping_list.shopping_list,
+        legacy_shopping_list.checked_items
+      FROM user_shopping_list AS legacy_shopping_list
+      LEFT JOIN users AS users_table
+        ON users_table.id = legacy_shopping_list.user_id
+      WHERE COALESCE(
+        users_table.kind_of_diet,
+        JSON_UNQUOTE(JSON_EXTRACT(users_table.diet_plan_summary, '$.dietType')),
+        'single-food'
+      ) <> 'recipes'
+      ON DUPLICATE KEY UPDATE
+        days_covered = VALUES(days_covered),
+        shopping_list = VALUES(shopping_list),
+        checked_items = VALUES(checked_items)
+    `,
+  );
+
+  await pool.query(
+    `
+      INSERT INTO shopping_market_recipes_list (
+        id,
+        user_id,
+        plan_week,
+        days_covered,
+        shopping_list,
+        checked_items
+      )
+      SELECT
+        UUID(),
+        legacy_shopping_list.user_id,
+        'current',
+        legacy_shopping_list.days_covered,
+        legacy_shopping_list.shopping_list,
+        legacy_shopping_list.checked_items
+      FROM user_shopping_list AS legacy_shopping_list
+      INNER JOIN users AS users_table
+        ON users_table.id = legacy_shopping_list.user_id
+      WHERE COALESCE(
+        users_table.kind_of_diet,
+        JSON_UNQUOTE(JSON_EXTRACT(users_table.diet_plan_summary, '$.dietType')),
+        'single-food'
+      ) = 'recipes'
+      ON DUPLICATE KEY UPDATE
+        days_covered = VALUES(days_covered),
+        shopping_list = VALUES(shopping_list),
+        checked_items = VALUES(checked_items)
+    `,
+  );
+
+  await pool.query("DROP TABLE user_shopping_list");
 };
 
 export const initializeDatabaseSchema = async (
@@ -499,6 +929,6 @@ export const initializeDatabaseSchema = async (
   await pool.query(createUserProgressTrackingTableStatement);
   await pool.query(createUserTrackingTableStatement);
   await pool.query(createUserTrackingHistoryTableStatement);
-  await pool.query(createUserShoppingListTableStatement);
-  await ensureShoppingTrackingColumns(pool);
+  await migrateLegacyShoppingLists(pool);
+  await ensurePlanRowStateColumns(pool);
 };

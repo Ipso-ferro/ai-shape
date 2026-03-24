@@ -2,7 +2,11 @@ import { RepositoryUser } from "../../user/repositories/RepositoryUser";
 import { NutritionGoalCalculatorService } from "../../user/handlers/services/NutritionGoalCalculatorService";
 import { generateDietPlan } from "../../../src/api/dietPlanGenerator";
 import { DietPlan } from "../../../src/types";
-import { DietCommand, DietType } from "../command/DietCommand";
+import {
+  DietCommand,
+  DietType,
+  PlanWeek,
+} from "../command/DietCommand";
 import {
   DietPlanGenerator,
   DietPlanService,
@@ -27,7 +31,13 @@ export class DietHandler {
     return this.dietPlanService.generatePlan(command);
   }
 
-  async getPlan(userId: string): Promise<DietPlan> {
-    return this.dietPlanService.getPlan(userId);
+  async getPlan(
+    userId: string,
+    options?: {
+      dietType?: DietType;
+      week?: PlanWeek;
+    },
+  ): Promise<DietPlan> {
+    return this.dietPlanService.getPlan(userId, options);
   }
 }

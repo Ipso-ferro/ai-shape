@@ -5,7 +5,7 @@ import { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { MySqlRepositoryUser } from "../../domain/user/repositories/MySqlRepositoryUser";
 import { mysqlPool } from "../../server/pool";
 import { initializeDatabaseSchema } from "../../server/initializers/DatabaseSchemaInitializing";
-import { DietPlan } from "../../src/types";
+import { DietPlan, ShoppingList, WorkoutPlan } from "../../src/types";
 
 interface CountRow extends RowDataPacket {
   count: number;
@@ -13,6 +13,21 @@ interface CountRow extends RowDataPacket {
 
 interface UserStateRow extends RowDataPacket {
   kind_of_diet: string | null;
+}
+
+interface BooleanStateRow extends RowDataPacket {
+  id: string | null;
+  breakfast_eaten?: number | boolean | null;
+  snack_1_eaten?: number | boolean | null;
+  lunch_eaten?: number | boolean | null;
+  dinner_eaten?: number | boolean | null;
+  snack_2_eaten?: number | boolean | null;
+  supplements_eaten?: number | boolean | null;
+  complete?: number | boolean | null;
+}
+
+interface ProgressTrackingStateRow extends RowDataPacket {
+  id: string | null;
 }
 
 const repository = new MySqlRepositoryUser(mysqlPool);
@@ -273,6 +288,33 @@ const buildSingleFoodPlan = (): DietPlan => ({
   })),
 });
 
+const buildWorkoutPlan = (): WorkoutPlan => ({
+  overview: {
+    split: "Upper / Lower",
+    avgDuration: "60 min",
+    estimatedWeeklyCaloriesBurned: 2100,
+    estimatedWeeklyKilojoulesBurned: 8786,
+  },
+  days: Array.from({ length: 7 }, (_, index) => ({
+    day: index + 1,
+    dayName: dayNames[index],
+    focus: `Focus ${index + 1}`,
+    warmUp: ["Row 5 min"],
+    exercises: [
+      {
+        name: `Exercise ${index + 1}`,
+        sets: "3",
+        reps: "10",
+        rest: "60 sec",
+      },
+    ],
+    coolDown: ["Stretch"],
+    totalDuration: "60 min",
+    estimatedCaloriesBurned: 300 + index,
+    estimatedKilojoulesBurned: 1255 + index,
+  })),
+});
+
 const createUser = async (userId: string): Promise<void> => {
   await mysqlPool.execute<ResultSetHeader>(
     `
@@ -305,6 +347,118 @@ const getUserDietType = async (userId: string): Promise<string | null> => {
   return rows[0]?.kind_of_diet ?? null;
 };
 
+const getDietWeekCount = async (
+  tableName: "user_recipe_plan" | "user_diet_plan",
+  userId: string,
+  week: "current" | "next",
+): Promise<number> => {
+  const [rows] = await mysqlPool.execute<CountRow[]>(
+    `SELECT COUNT(*) AS count FROM ${tableName} WHERE user_id = ? AND plan_week = ?`,
+    [userId, week],
+  );
+
+  return rows[0]?.count ?? 0;
+};
+
+const getDietRowState = async (
+  tableName: "user_recipe_plan" | "user_diet_plan",
+  userId: string,
+  week: "current" | "next",
+  dayNumber: number,
+): Promise<BooleanStateRow | null> => {
+  const [rows] = await mysqlPool.execute<BooleanStateRow[]>(
+    `SELECT id, breakfast_eaten, snack_1_eaten, lunch_eaten, dinner_eaten, snack_2_eaten, supplements_eaten FROM ${tableName} WHERE user_id = ? AND plan_week = ? AND day_number = ? LIMIT 1`,
+    [userId, week, dayNumber],
+  );
+
+  return rows[0] ?? null;
+};
+
+const getWorkoutRowState = async (
+  userId: string,
+  dayNumber: number,
+): Promise<BooleanStateRow | null> => {
+  const [rows] = await mysqlPool.execute<BooleanStateRow[]>(
+    "SELECT id, complete FROM user_workout_plan_days WHERE user_id = ? AND day_number = ? LIMIT 1",
+    [userId, dayNumber],
+  );
+
+  return rows[0] ?? null;
+};
+
+const getProgressTrackingRowState = async (
+  userId: string,
+  trackedOn: string,
+): Promise<ProgressTrackingStateRow | null> => {
+  const [rows] = await mysqlPool.execute<ProgressTrackingStateRow[]>(
+    "SELECT id FROM user_progress_tracking WHERE user_id = ? AND tracked_on = ? LIMIT 1",
+    [userId, trackedOn],
+  );
+
+  return rows[0] ?? null;
+};
+
+const buildShoppingList = (label: string): ShoppingList => ({
+  metadata: {
+    totalItems: 3,
+    estimatedCost: 42,
+    recommendedStore: "Aldi",
+    currency: "AUD",
+    storeSections: 2,
+    prepTime: "45 minutes",
+    daysCovered: 7,
+  },
+  categories: {
+    proteins: [
+      { id: `${label}-protein`, item: `${label} chicken`, quantity: 1200, quantityUnit: "g" },
+    ],
+    produce: [
+      { id: `${label}-produce`, item: `${label} spinach`, quantity: 400, quantityUnit: "g" },
+    ],
+    pantry: [],
+    dairy: [],
+    frozen: [],
+    beverages: [
+      { id: `${label}-drink`, item: `${label} milk`, quantity: 2000, quantityUnit: "ml" },
+    ],
+  },
+  byStoreSection: [
+    {
+      section: "Protein",
+      items: [
+        { id: `${label}-protein`, item: `${label} chicken`, quantity: 1200, quantityUnit: "g" },
+      ],
+    },
+    {
+      section: "Fridge",
+      items: [
+        { id: `${label}-drink`, item: `${label} milk`, quantity: 2000, quantityUnit: "ml" },
+      ],
+    },
+  ],
+  mealPrepStrategy: {
+    batchCookItems: ["Chicken"],
+    prepOrder: ["Cook protein"],
+    storageInstructions: ["Keep chilled"],
+    equipmentNeeded: ["Pan"],
+  },
+  pantryChecklist: ["Salt"],
+  costOptimizations: ["Buy in bulk"],
+});
+
+const getShoppingWeekCount = async (
+  tableName: "shopping_market_recipes_list" | "shopping_market_single_food_list",
+  userId: string,
+  week: "current" | "next",
+): Promise<number> => {
+  const [rows] = await mysqlPool.execute<CountRow[]>(
+    `SELECT COUNT(*) AS count FROM ${tableName} WHERE user_id = ? AND plan_week = ?`,
+    [userId, week],
+  );
+
+  return rows[0]?.count ?? 0;
+};
+
 test("recipe plans persist in user_recipe_plan and load back from the repository", async (t) => {
   const userId = randomUUID();
   t.after(async () => {
@@ -317,7 +471,8 @@ test("recipe plans persist in user_recipe_plan and load back from the repository
   await repository.saveDietPlan(userId, recipePlan, "recipes");
 
   assert.equal(await getUserDietType(userId), "recipes");
-  assert.equal(await getCount("user_recipe_plan", userId), 7);
+  assert.equal(await getDietWeekCount("user_recipe_plan", userId, "current"), 7);
+  assert.equal(await getDietWeekCount("user_recipe_plan", userId, "next"), 0);
   assert.equal(await getCount("user_diet_plan", userId), 0);
 
   const storedPlan = await repository.getDietPlan(userId);
@@ -329,6 +484,7 @@ test("recipe plans persist in user_recipe_plan and load back from the repository
   assert.ok(recipeBreakfast?.instructions);
   assert.equal(recipeBreakfast?.instructions?.length, 2);
   assert.equal(recipeBreakfast?.preparationTimeMinutes, 12);
+  assert.equal(storedPlan.days[0]?.eatenMeals?.breakfast, false);
 });
 
 test("single-food plans persist in user_diet_plan and load back from the repository", async (t) => {
@@ -344,7 +500,8 @@ test("single-food plans persist in user_diet_plan and load back from the reposit
 
   assert.equal(await getUserDietType(userId), "single-food");
   assert.equal(await getCount("user_recipe_plan", userId), 0);
-  assert.equal(await getCount("user_diet_plan", userId), 7);
+  assert.equal(await getDietWeekCount("user_diet_plan", userId, "current"), 7);
+  assert.equal(await getDietWeekCount("user_diet_plan", userId, "next"), 0);
 
   const storedPlan = await repository.getDietPlan(userId);
 
@@ -352,4 +509,261 @@ test("single-food plans persist in user_diet_plan and load back from the reposit
   assert.equal(storedPlan.days.length, 7);
   assert.equal(storedPlan.days[0].breakfast.object, "Egg breakfast 1");
   assert.equal(storedPlan.days[0].breakfast.instructions, undefined);
+  assert.equal(storedPlan.days[0].eatenMeals?.breakfast, false);
+});
+
+test("current and next week plans persist independently by diet type", async (t) => {
+  const userId = randomUUID();
+  t.after(async () => {
+    await mysqlPool.execute<ResultSetHeader>("DELETE FROM users WHERE id = ?", [userId]);
+  });
+
+  await createUser(userId);
+
+  const recipeCurrent = buildRecipePlan();
+  const recipeNext = buildRecipePlan();
+  recipeNext.summary.dailyCalories = 2500;
+  recipeNext.days[0].breakfast.object = "Recipe Breakfast Next Week";
+
+  const singleFoodCurrent = buildSingleFoodPlan();
+  singleFoodCurrent.days[0].breakfast.object = "Egg breakfast current";
+
+  await repository.saveDietPlan(userId, recipeCurrent, "recipes", { week: "current" });
+  await repository.saveDietPlan(userId, recipeNext, "recipes", { week: "next" });
+  await repository.saveDietPlan(userId, singleFoodCurrent, "single-food", { week: "current" });
+
+  assert.equal(await getDietWeekCount("user_recipe_plan", userId, "current"), 7);
+  assert.equal(await getDietWeekCount("user_recipe_plan", userId, "next"), 7);
+  assert.equal(await getDietWeekCount("user_diet_plan", userId, "current"), 7);
+
+  const storedRecipeCurrent = await repository.getDietPlan(userId, {
+    dietType: "recipes",
+    week: "current",
+  });
+  const storedRecipeNext = await repository.getDietPlan(userId, {
+    dietType: "recipes",
+    week: "next",
+  });
+  const storedSingleFoodCurrent = await repository.getDietPlan(userId, {
+    dietType: "single-food",
+    week: "current",
+  });
+
+  assert.equal(storedRecipeCurrent?.days[0]?.breakfast.object, recipeCurrent.days[0].breakfast.object);
+  assert.equal(storedRecipeNext?.days[0]?.breakfast.object, "Recipe Breakfast Next Week");
+  assert.equal(storedSingleFoodCurrent?.days[0]?.breakfast.object, "Egg breakfast current");
+});
+
+test("saving an alternate diet table without activation keeps the current user diet type", async (t) => {
+  const userId = randomUUID();
+  t.after(async () => {
+    await mysqlPool.execute<ResultSetHeader>("DELETE FROM users WHERE id = ?", [userId]);
+  });
+
+  await createUser(userId);
+
+  const singleFoodPlan = buildSingleFoodPlan();
+  const recipePlan = buildRecipePlan();
+
+  await repository.saveDietPlan(userId, singleFoodPlan, "single-food", {
+    week: "current",
+  });
+  await repository.saveDietPlan(userId, recipePlan, "recipes", {
+    week: "current",
+    activateDietType: false,
+  });
+
+  assert.equal(await getUserDietType(userId), "single-food");
+  assert.equal(await getDietWeekCount("user_diet_plan", userId, "current"), 7);
+  assert.equal(await getDietWeekCount("user_recipe_plan", userId, "current"), 7);
+
+  const storedRecipePlan = await repository.getDietPlan(userId, {
+    dietType: "recipes",
+    week: "current",
+  });
+
+  assert.equal(storedRecipePlan?.days[0]?.breakfast.object, recipePlan.days[0].breakfast.object);
+});
+
+test("diet and workout plan rows persist ids and completion flags", async (t) => {
+  const userId = randomUUID();
+  t.after(async () => {
+    await mysqlPool.execute<ResultSetHeader>("DELETE FROM users WHERE id = ?", [userId]);
+  });
+
+  await createUser(userId);
+
+  await repository.saveDietPlan(userId, buildSingleFoodPlan(), "single-food", {
+    week: "current",
+  });
+  await repository.saveDietPlan(userId, buildRecipePlan(), "recipes", {
+    week: "current",
+    activateDietType: false,
+  });
+  await repository.saveWorkoutPlan(userId, buildWorkoutPlan());
+
+  const initialDietRow = await getDietRowState("user_diet_plan", userId, "current", 1);
+  const initialWorkoutRow = await getWorkoutRowState(userId, 1);
+
+  assert.ok(initialDietRow?.id);
+  assert.equal(Boolean(initialDietRow?.breakfast_eaten), false);
+  assert.equal(Boolean(initialDietRow?.lunch_eaten), false);
+  assert.ok(initialWorkoutRow?.id);
+  assert.equal(Boolean(initialWorkoutRow?.complete), false);
+
+  await repository.syncDietPlanMealEatenState(userId, "single-food", 1, "breakfast", true, "current");
+  await repository.syncWorkoutPlanDayCompletionState(userId, 1, true);
+
+  const updatedDietRow = await getDietRowState("user_diet_plan", userId, "current", 1);
+  const untouchedRecipeRow = await getDietRowState("user_recipe_plan", userId, "current", 1);
+  const updatedWorkoutRow = await getWorkoutRowState(userId, 1);
+
+  assert.equal(Boolean(updatedDietRow?.breakfast_eaten), true);
+  assert.equal(Boolean(updatedDietRow?.lunch_eaten), false);
+  assert.equal(Boolean(untouchedRecipeRow?.breakfast_eaten), false);
+  assert.equal(Boolean(updatedWorkoutRow?.complete), true);
+
+  await repository.syncDietPlanMealEatenState(userId, "single-food", 1, "breakfast", false, "current");
+  await repository.syncWorkoutPlanDayCompletionState(userId, 1, false);
+
+  const resetDietRow = await getDietRowState("user_diet_plan", userId, "current", 1);
+  const resetWorkoutRow = await getWorkoutRowState(userId, 1);
+
+  assert.equal(Boolean(resetDietRow?.breakfast_eaten), false);
+  assert.equal(Boolean(resetWorkoutRow?.complete), false);
+});
+
+test("progress tracking rows persist ids", async (t) => {
+  const userId = randomUUID();
+  t.after(async () => {
+    await mysqlPool.execute<ResultSetHeader>("DELETE FROM users WHERE id = ?", [userId]);
+  });
+
+  await createUser(userId);
+
+  await repository.saveUserProgressDay({
+    userId,
+    date: "2026-03-02",
+    planDayNumber: 1,
+    planDayName: "Monday",
+    targets: {
+      calories: 2400,
+      kilojoules: 10042,
+    },
+    meals: {
+      breakfast: {
+        completed: true,
+        completedAt: "2026-03-02T08:00:00.000Z",
+        calories: 320,
+        kilojoules: 1339,
+        proteinGrams: 30,
+        carbsGrams: 20,
+        fatsGrams: 10,
+      },
+      snack1: {
+        completed: false,
+        completedAt: null,
+        calories: 0,
+        kilojoules: 0,
+        proteinGrams: 0,
+        carbsGrams: 0,
+        fatsGrams: 0,
+      },
+      lunch: {
+        completed: false,
+        completedAt: null,
+        calories: 0,
+        kilojoules: 0,
+        proteinGrams: 0,
+        carbsGrams: 0,
+        fatsGrams: 0,
+      },
+      dinner: {
+        completed: false,
+        completedAt: null,
+        calories: 0,
+        kilojoules: 0,
+        proteinGrams: 0,
+        carbsGrams: 0,
+        fatsGrams: 0,
+      },
+      snack2: {
+        completed: false,
+        completedAt: null,
+        calories: 0,
+        kilojoules: 0,
+        proteinGrams: 0,
+        carbsGrams: 0,
+        fatsGrams: 0,
+      },
+      supplements: {
+        completed: false,
+        completedAt: null,
+        calories: 0,
+        kilojoules: 0,
+        proteinGrams: 0,
+        carbsGrams: 0,
+        fatsGrams: 0,
+      },
+    },
+    workout: {
+      completed: false,
+      completedAt: null,
+      caloriesBurned: 0,
+      kilojoulesBurned: 0,
+    },
+    macroTotals: {
+      proteinGrams: 30,
+      carbsGrams: 20,
+      fatsGrams: 10,
+    },
+    totals: {
+      caloriesConsumed: 320,
+      kilojoulesConsumed: 1339,
+      caloriesBurned: 0,
+      kilojoulesBurned: 0,
+      netCalories: 320,
+      netKilojoules: 1339,
+      calorieDeltaFromTarget: -2080,
+      kilojouleDeltaFromTarget: -8703,
+      mealsCompleted: 1,
+      workoutsCompleted: 0,
+    },
+  });
+
+  const trackedRow = await getProgressTrackingRowState(userId, "2026-03-02");
+  assert.ok(trackedRow?.id);
+});
+
+test("shopping lists persist independently by diet type and week", async (t) => {
+  const userId = randomUUID();
+  t.after(async () => {
+    await mysqlPool.execute<ResultSetHeader>("DELETE FROM users WHERE id = ?", [userId]);
+  });
+
+  await createUser(userId);
+
+  const recipeCurrentShopping = buildShoppingList("recipe-current");
+  const recipeNextShopping = buildShoppingList("recipe-next");
+  const singleFoodCurrentShopping = buildShoppingList("single-current");
+
+  await repository.saveShoppingList(userId, recipeCurrentShopping, "recipes", "current");
+  await repository.saveShoppingList(userId, recipeNextShopping, "recipes", "next");
+  await repository.saveShoppingList(userId, singleFoodCurrentShopping, "single-food", "current");
+
+  assert.equal(await getShoppingWeekCount("shopping_market_recipes_list", userId, "current"), 1);
+  assert.equal(await getShoppingWeekCount("shopping_market_recipes_list", userId, "next"), 1);
+  assert.equal(await getShoppingWeekCount("shopping_market_single_food_list", userId, "current"), 1);
+
+  const storedRecipeNext = await repository.getShoppingList(userId, {
+    dietType: "recipes",
+    week: "next",
+  });
+  const storedSingleFoodCurrent = await repository.getShoppingList(userId, {
+    dietType: "single-food",
+    week: "current",
+  });
+
+  assert.equal(storedRecipeNext?.categories.proteins[0]?.item, "recipe-next chicken");
+  assert.equal(storedSingleFoodCurrent?.categories.proteins[0]?.item, "single-current chicken");
 });

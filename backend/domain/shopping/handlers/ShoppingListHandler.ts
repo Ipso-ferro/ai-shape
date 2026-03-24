@@ -1,12 +1,12 @@
 import { NotFoundError } from "../../share/Errors/AppErrors";
 import { RepositoryUser } from "../../user/repositories/RepositoryUser";
-import { ShoppingList } from "../../../src/types";
+import { PlanSelectionOptions, ShoppingList } from "../../../src/types";
 
 export class ShoppingListHandler {
   constructor(private readonly repositoryUser: RepositoryUser) {}
 
-  async getList(userId: string): Promise<ShoppingList> {
-    const shoppingList = await this.repositoryUser.getShoppingList(userId);
+  async getList(userId: string, options?: PlanSelectionOptions): Promise<ShoppingList> {
+    const shoppingList = await this.repositoryUser.getShoppingList(userId, options);
 
     if (!shoppingList) {
       throw new NotFoundError(`Shopping list for user "${userId}" was not found.`);
@@ -19,7 +19,8 @@ export class ShoppingListHandler {
     userId: string,
     itemId: string,
     checked: boolean,
+    options?: PlanSelectionOptions,
   ): Promise<ShoppingList> {
-    return this.repositoryUser.toggleShoppingListItem(userId, itemId, checked);
+    return this.repositoryUser.toggleShoppingListItem(userId, itemId, checked, options);
   }
 }

@@ -3,6 +3,7 @@ import type { DataUserCommand } from "../../domain/user/command/DataUserCommand"
 export type { DataUserCommand };
 
 export type DietType = "recipes" | "single-food";
+export type PlanWeek = "current" | "next";
 export type EnergyUnit = "kj" | "cal";
 export type TrackableMealSlot =
   | "breakfast"
@@ -17,6 +18,21 @@ export interface ApiResponse<T> {
   success: boolean;
   data: T;
   metadata?: Record<string, unknown>;
+}
+
+export interface PlanSelectionOptions {
+  dietType?: DietType;
+  week?: PlanWeek;
+}
+
+export interface ProgressPlanSelectionOptions {
+  dietType?: DietType;
+  week?: PlanWeek;
+}
+
+export interface SaveDietPlanOptions {
+  week?: PlanWeek;
+  activateDietType?: boolean;
 }
 
 export interface DietContext {
@@ -54,6 +70,15 @@ export interface DietPlanEntry {
   kilojoules: number;
 }
 
+export interface DietPlanDayMealState {
+  breakfast: boolean;
+  snack1: boolean;
+  lunch: boolean;
+  dinner: boolean;
+  snack2: boolean;
+  supplements: boolean;
+}
+
 export interface DietPlanDay {
   day: number;
   dayName: string;
@@ -63,6 +88,7 @@ export interface DietPlanDay {
   dinner: DietPlanEntry;
   snack2: DietPlanEntry;
   supplements: DietPlanEntry[];
+  eatenMeals?: DietPlanDayMealState;
 }
 
 export interface DietPlan {

@@ -20,16 +20,24 @@ import {
   ApiResponse,
   CompletePlanResult,
   DietPlan,
+  DietPlanDayMealState,
+  DietType,
+  PlanSelectionOptions,
+  PlanWeek,
+  SaveDietPlanOptions,
   ShoppingList,
+  TrackableMealSlot,
   UserProgressDay,
   WorkoutPlan,
 } from "../../src/types";
 
 class RepositoryUserMock implements RepositoryUser {
-  private dietPlan: DietPlan | null = null;
+  private readonly dietPlans = new Map<string, DietPlan>();
   private workoutPlan: WorkoutPlan | null = null;
-  private shoppingList: ShoppingList | null = null;
+  private readonly shoppingLists = new Map<string, ShoppingList>();
   private readonly progressDays = new Map<string, UserProgressDay>();
+  private readonly dietMealEatenStates = new Map<string, boolean>();
+  private readonly workoutDayCompletionStates = new Map<string, boolean>();
   private readonly usersById = new Map<string, DataUserCommand>();
   private readonly credentialsByEmail = new Map<string, UserCredentials>();
 
@@ -38,12 +46,75 @@ class RepositoryUserMock implements RepositoryUser {
     dietPlan: DietPlan | null = null,
     workoutPlan: WorkoutPlan | null = null,
   ) {
-    this.dietPlan = dietPlan;
     this.workoutPlan = workoutPlan;
 
     if (user) {
       this.usersById.set(user.id, user);
     }
+
+    if (dietPlan) {
+      this.dietPlans.set("recipes:current", dietPlan);
+      for (const day of dietPlan.days) {
+        for (const mealSlot of ["breakfast", "snack1", "lunch", "dinner", "snack2", "supplements"] as const) {
+          this.dietMealEatenStates.set(
+            this.resolveDietDayStateKey("recipes", "current", day.day, mealSlot),
+            false,
+          );
+        }
+      }
+    }
+
+    if (workoutPlan) {
+      for (const day of workoutPlan.days) {
+        this.workoutDayCompletionStates.set(String(day.day), false);
+      }
+    }
+  }
+
+  private resolveDietKey(dietType: DietType = "recipes", week: PlanWeek = "current"): string {
+    return `${dietType}:${week}`;
+  }
+
+  private resolveDietDayStateKey(
+    dietType: DietType,
+    week: PlanWeek,
+    dayNumber: number,
+    mealSlot: TrackableMealSlot,
+  ): string {
+    return `${dietType}:${week}:${dayNumber}:${mealSlot}`;
+  }
+
+  private createEmptyMealState(): DietPlanDayMealState {
+    return {
+      breakfast: false,
+      snack1: false,
+      lunch: false,
+      dinner: false,
+      snack2: false,
+      supplements: false,
+    };
+  }
+
+  private buildDietPlanWithMealStates(
+    dietPlan: DietPlan,
+    dietType: DietType,
+    week: PlanWeek,
+  ): DietPlan {
+    return {
+      ...dietPlan,
+      days: dietPlan.days.map((day) => ({
+        ...day,
+        eatenMeals: {
+          ...this.createEmptyMealState(),
+          breakfast: this.getDietPlanMealEatenState(dietType, week, day.day, "breakfast") ?? false,
+          snack1: this.getDietPlanMealEatenState(dietType, week, day.day, "snack1") ?? false,
+          lunch: this.getDietPlanMealEatenState(dietType, week, day.day, "lunch") ?? false,
+          dinner: this.getDietPlanMealEatenState(dietType, week, day.day, "dinner") ?? false,
+          snack2: this.getDietPlanMealEatenState(dietType, week, day.day, "snack2") ?? false,
+          supplements: this.getDietPlanMealEatenState(dietType, week, day.day, "supplements") ?? false,
+        },
+      })),
+    };
   }
 
   async addNewUser(user: CreateUserRecordCommand): Promise<void> {
@@ -97,16 +168,46 @@ class RepositoryUserMock implements RepositoryUser {
   }
 
   async saveDietPlan(
-    _userId: string,
+    userId: string,
     dietPlan: DietPlan,
-    _dietType: "recipes" | "single-food",
+    dietType: "recipes" | "single-food",
+    options?: SaveDietPlanOptions,
   ): Promise<DietPlan> {
-    this.dietPlan = dietPlan;
+    const week = options?.week ?? "current";
+    this.dietPlans.set(this.resolveDietKey(dietType, week), dietPlan);
+    for (const day of dietPlan.days) {
+      for (const mealSlot of ["breakfast", "snack1", "lunch", "dinner", "snack2", "supplements"] as const) {
+        this.dietMealEatenStates.set(
+          this.resolveDietDayStateKey(dietType, week, day.day, mealSlot),
+          false,
+        );
+      }
+    }
+
+    if (week === "current" && options?.activateDietType !== false) {
+      const currentUser = this.usersById.get(userId);
+
+      if (currentUser) {
+        this.usersById.set(userId, {
+          ...currentUser,
+          kindOfDiet: dietType,
+        });
+      }
+    }
+
     return dietPlan;
   }
 
-  async getDietPlan(_userId: string): Promise<DietPlan | null> {
-    return this.dietPlan;
+  async getDietPlan(
+    userId: string,
+    options?: PlanSelectionOptions,
+  ): Promise<DietPlan | null> {
+    const currentUser = this.usersById.get(userId);
+    const dietType = options?.dietType ?? (currentUser?.kindOfDiet === "single-food" ? "single-food" : "recipes");
+    const week = options?.week ?? "current";
+    const plan = this.dietPlans.get(this.resolveDietKey(dietType, week)) ?? null;
+
+    return plan ? this.buildDietPlanWithMealStates(plan, dietType, week) : null;
   }
 
   async saveWorkoutPlan(
@@ -114,6 +215,9 @@ class RepositoryUserMock implements RepositoryUser {
     workoutPlan: WorkoutPlan,
   ): Promise<WorkoutPlan> {
     this.workoutPlan = workoutPlan;
+    for (const day of workoutPlan.days) {
+      this.workoutDayCompletionStates.set(String(day.day), false);
+    }
     return workoutPlan;
   }
 
@@ -124,21 +228,36 @@ class RepositoryUserMock implements RepositoryUser {
   async saveShoppingList(
     _userId: string,
     shoppingList: ShoppingList,
+    dietType: DietType,
+    week: PlanWeek = "current",
   ): Promise<ShoppingList> {
-    this.shoppingList = shoppingList;
+    this.shoppingLists.set(this.resolveDietKey(dietType, week), shoppingList);
     return shoppingList;
   }
 
-  async getShoppingList(_userId: string): Promise<ShoppingList | null> {
-    return this.shoppingList;
+  async getShoppingList(
+    userId: string,
+    options?: PlanSelectionOptions,
+  ): Promise<ShoppingList | null> {
+    const currentUser = this.usersById.get(userId);
+    const dietType = options?.dietType ?? (currentUser?.kindOfDiet === "single-food" ? "single-food" : "recipes");
+    const week = options?.week ?? "current";
+
+    return this.shoppingLists.get(this.resolveDietKey(dietType, week)) ?? null;
   }
 
   async toggleShoppingListItem(
-    _userId: string,
+    userId: string,
     itemId: string,
     checked: boolean,
+    options?: PlanSelectionOptions,
   ): Promise<ShoppingList> {
-    if (!this.shoppingList) {
+    const currentUser = this.usersById.get(userId);
+    const dietType = options?.dietType ?? (currentUser?.kindOfDiet === "single-food" ? "single-food" : "recipes");
+    const week = options?.week ?? "current";
+    const shoppingList = this.shoppingLists.get(this.resolveDietKey(dietType, week));
+
+    if (!shoppingList) {
       throw new Error("Shopping list not found.");
     }
 
@@ -150,28 +269,56 @@ class RepositoryUserMock implements RepositoryUser {
       ))
     );
 
-    this.shoppingList = {
-      ...this.shoppingList,
+    const updatedShoppingList: ShoppingList = {
+      ...shoppingList,
       categories: {
-        proteins: updateItems(this.shoppingList.categories.proteins),
-        produce: updateItems(this.shoppingList.categories.produce),
-        pantry: updateItems(this.shoppingList.categories.pantry),
-        dairy: updateItems(this.shoppingList.categories.dairy),
-        frozen: updateItems(this.shoppingList.categories.frozen),
-        beverages: updateItems(this.shoppingList.categories.beverages),
+        proteins: updateItems(shoppingList.categories.proteins),
+        produce: updateItems(shoppingList.categories.produce),
+        pantry: updateItems(shoppingList.categories.pantry),
+        dairy: updateItems(shoppingList.categories.dairy),
+        frozen: updateItems(shoppingList.categories.frozen),
+        beverages: updateItems(shoppingList.categories.beverages),
       },
-      byStoreSection: this.shoppingList.byStoreSection.map((section) => ({
+      byStoreSection: shoppingList.byStoreSection.map((section) => ({
         ...section,
         items: updateItems(section.items),
       })),
     };
 
-    return this.shoppingList;
+    this.shoppingLists.set(this.resolveDietKey(dietType, week), updatedShoppingList);
+
+    return updatedShoppingList;
   }
 
   async saveUserProgressDay(progressDay: UserProgressDay): Promise<UserProgressDay> {
     this.progressDays.set(`${progressDay.userId}:${progressDay.date}`, progressDay);
     return progressDay;
+  }
+
+  async syncDietPlanMealEatenState(
+    _userId: string,
+    dietType: DietType,
+    dayNumber: number,
+    mealSlot: TrackableMealSlot,
+    eaten: boolean,
+    week: PlanWeek = "current",
+  ): Promise<void> {
+    const plan = this.dietPlans.get(this.resolveDietKey(dietType, week));
+
+    if (plan) {
+      this.dietMealEatenStates.set(
+        this.resolveDietDayStateKey(dietType, week, dayNumber, mealSlot),
+        eaten,
+      );
+    }
+  }
+
+  async syncWorkoutPlanDayCompletionState(
+    _userId: string,
+    dayNumber: number,
+    completed: boolean,
+  ): Promise<void> {
+    this.workoutDayCompletionStates.set(String(dayNumber), completed);
   }
 
   async getUserProgressDay(
@@ -219,6 +366,19 @@ class RepositoryUserMock implements RepositoryUser {
       ...credential,
       googleSub,
     });
+  }
+
+  getDietPlanMealEatenState(
+    dietType: DietType,
+    week: PlanWeek,
+    dayNumber: number,
+    mealSlot: TrackableMealSlot,
+  ): boolean | undefined {
+    return this.dietMealEatenStates.get(this.resolveDietDayStateKey(dietType, week, dayNumber, mealSlot));
+  }
+
+  getWorkoutPlanCompletionState(dayNumber: number): boolean | undefined {
+    return this.workoutDayCompletionStates.get(String(dayNumber));
   }
 }
 
@@ -461,12 +621,13 @@ const createAuthHeaders = (
   ...additionalHeaders,
 });
 
-const createTestServer = () => {
-  const repositoryUser = new RepositoryUserMock(
+const createTestServer = (
+  repositoryUser = new RepositoryUserMock(
     sampleUser,
     sampleDietPlan,
     sampleWorkoutPlan,
-  );
+  ),
+) => {
   const userHandler = new UserHandler(repositoryUser);
   const workoutsHandler = new WorkoutsHandler(
     repositoryUser,
@@ -502,15 +663,20 @@ const createTestServer = () => {
 };
 
 const withRunningServer = async (
-  callback: (baseUrl: string) => Promise<void>,
+  callback: (baseUrl: string, repositoryUser: RepositoryUserMock) => Promise<void>,
+  repositoryUser = new RepositoryUserMock(
+    sampleUser,
+    sampleDietPlan,
+    sampleWorkoutPlan,
+  ),
 ): Promise<void> => {
-  const app = createTestServer();
+  const app = createTestServer(repositoryUser);
   const server = app.listen(0);
   const address = server.address() as AddressInfo;
   const baseUrl = `http://127.0.0.1:${address.port}`;
 
   try {
-    await callback(baseUrl);
+    await callback(baseUrl, repositoryUser);
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((error?: Error) => {
@@ -674,7 +840,7 @@ test("POST /users/:id/complete-plan returns the generated full plan", async () =
 });
 
 test("PUT /progress/users/:id/meals/:mealSlot and /workout track daily energy totals", async () => {
-  await withRunningServer(async (baseUrl) => {
+  await withRunningServer(async (baseUrl, repositoryUser) => {
     const breakfastResponse = await fetch(
       `${baseUrl}/progress/users/${sampleUser.id}/meals/breakfast`,
       {
@@ -694,6 +860,7 @@ test("PUT /progress/users/:id/meals/:mealSlot and /workout track daily energy to
     assert.equal(breakfastPayload.meals.breakfast.completed, true);
     assert.equal(breakfastPayload.totals.caloriesConsumed, 380);
     assert.equal(breakfastPayload.totals.kilojoulesConsumed, 1590);
+    assert.equal(repositoryUser.getDietPlanMealEatenState("recipes", "current", 1, "breakfast"), true);
 
     const workoutResponse = await fetch(`${baseUrl}/progress/users/${sampleUser.id}/workout`, {
       method: "PUT",
@@ -712,6 +879,7 @@ test("PUT /progress/users/:id/meals/:mealSlot and /workout track daily energy to
     assert.equal(workoutPayload.totals.caloriesBurned, 350);
     assert.equal(workoutPayload.totals.kilojoulesBurned, 1464);
     assert.equal(workoutPayload.totals.netCalories, 30);
+    assert.equal(repositoryUser.getWorkoutPlanCompletionState(1), true);
 
     const dayResponse = await fetch(
       `${baseUrl}/progress/users/${sampleUser.id}/day?date=2026-03-02`,
@@ -744,7 +912,7 @@ test("PUT /progress/users/:id/meals/:mealSlot and /workout track daily energy to
 });
 
 test("PUT /progress/users/:id/meals/:mealSlot with completed=false removes tracked meal energy", async () => {
-  await withRunningServer(async (baseUrl) => {
+  await withRunningServer(async (baseUrl, repositoryUser) => {
     const requestOptions = {
       method: "PUT",
       headers: createAuthHeaders({
@@ -781,7 +949,45 @@ test("PUT /progress/users/:id/meals/:mealSlot with completed=false removes track
     assert.equal(payload.totals.caloriesConsumed, 0);
     assert.equal(payload.totals.kilojoulesConsumed, 0);
     assert.equal(payload.totals.mealsCompleted, 0);
+    assert.equal(repositoryUser.getDietPlanMealEatenState("recipes", "current", 2, "breakfast"), false);
   });
+});
+
+test("PUT /progress/users/:id/meals/:mealSlot uses the selected diet table when dietType is provided", async () => {
+  const alternateRepository = new RepositoryUserMock(sampleUser, sampleDietPlan, sampleWorkoutPlan);
+  const singleFoodPlan: DietPlan = JSON.parse(JSON.stringify(sampleDietPlan));
+  singleFoodPlan.days[0].breakfast.object = "Single food breakfast";
+  singleFoodPlan.days[0].breakfast.calories = 510;
+  singleFoodPlan.days[0].breakfast.kilojoules = 2134;
+  await alternateRepository.saveDietPlan(sampleUser.id, singleFoodPlan, "single-food", {
+    activateDietType: false,
+  });
+
+  await withRunningServer(async (baseUrl, repositoryUser) => {
+    const response = await fetch(
+      `${baseUrl}/progress/users/${sampleUser.id}/meals/breakfast`,
+      {
+        method: "PUT",
+        headers: createAuthHeaders({
+          "Content-Type": "application/json",
+        }),
+        body: JSON.stringify({
+          date: "2026-03-02",
+          dietType: "single-food",
+          completed: true,
+        }),
+      },
+    );
+
+    assert.equal(response.status, 200);
+
+    const payload = await response.json();
+    assert.equal(payload.meals.breakfast.completed, true);
+    assert.equal(payload.totals.caloriesConsumed, 510);
+    assert.equal(payload.totals.kilojoulesConsumed, 2134);
+    assert.equal(repositoryUser.getDietPlanMealEatenState("single-food", "current", 1, "breakfast"), true);
+    assert.equal(repositoryUser.getDietPlanMealEatenState("recipes", "current", 1, "breakfast"), false);
+  }, alternateRepository);
 });
 
 test("PUT /progress/users/:id/meals/:mealSlot accumulates more than one meal on the same day", async () => {
