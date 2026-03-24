@@ -122,6 +122,6 @@ export const SHOPPING_LIST_MAX_TOKENS = getNumberFromEnv(
 
 export interface ChatCompletionOptions {
     temperature?: number;
-    response_format?: { type: "json_object" | "text" };
+    response_format?: { type: "json_object" | "json_schema" | "text" };
     max_tokens?: number;
 }

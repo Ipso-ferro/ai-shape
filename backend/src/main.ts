@@ -2,7 +2,7 @@ import { generateCompletePlan } from "./services/completePlanService";
 import { SkillLoader } from "./utils/skillLoader";
 import { DataUserCommand } from "./types";
 
-SkillLoader.preload(["nutritionist", "coach", "shopper"]);
+SkillLoader.preload(["recipe-nutritionist", "single-food-nutritionist", "coach", "shopper"]);
 
 const sampleUserData: DataUserCommand = {
   id: "user-123",

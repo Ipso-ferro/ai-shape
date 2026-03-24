@@ -26,20 +26,13 @@ export class DietPlanService {
   ) {}
 
   async generatePlan(command: DietCommand): Promise<DietPlan> {
-    const userData = await this.repositoryUser.getDataUser({ id: command.userId });
-
-    if (!userData) {
-      throw new NotFoundError(`User with id "${command.userId}" was not found.`);
-    }
-
-    const hydratedUserData = this.nutritionGoalCalculatorService.hydrate(userData);
-    validateUserData(hydratedUserData as PlanDataUserCommand);
-
-    const dietType = resolveDietType(command.dietType, userData.kindOfDiet);
-    validateDietType(dietType);
+    const {
+      dietType,
+      hydratedUserData,
+    } = await this.resolveGenerationContext(command.userId, command.dietType);
 
     const result = await this.dietPlanGenerator(
-      hydratedUserData as PlanDataUserCommand,
+      hydratedUserData,
       dietType,
     );
 
@@ -49,11 +42,73 @@ export class DietPlanService {
   async getPlan(userId: string): Promise<DietPlan> {
     const plan = await this.repositoryUser.getDietPlan(userId);
 
-    if (!plan) {
-      throw new NotFoundError(`Diet plan for user "${userId}" was not found.`);
+    if (plan) {
+      return plan;
     }
 
-    return plan;
+    const userData = await this.repositoryUser.getDataUser({ id: userId });
+
+    if (!userData) {
+      throw new NotFoundError(`User with id "${userId}" was not found.`);
+    }
+
+    const recoveredPlan = await this.recoverRecipePlan(userId, userData);
+
+    if (recoveredPlan) {
+      return recoveredPlan;
+    }
+
+    throw new NotFoundError(`Diet plan for user "${userId}" was not found.`);
+  }
+
+  private async resolveGenerationContext(
+    userId: string,
+    requestedDietType?: DietType,
+  ): Promise<{
+    dietType: DietType;
+    hydratedUserData: PlanDataUserCommand;
+  }> {
+    const userData = await this.repositoryUser.getDataUser({ id: userId });
+
+    if (!userData) {
+      throw new NotFoundError(`User with id "${userId}" was not found.`);
+    }
+
+    const hydratedUserData = this.nutritionGoalCalculatorService.hydrate(userData);
+    validateUserData(hydratedUserData as PlanDataUserCommand);
+
+    const dietType = resolveDietType(requestedDietType, userData.kindOfDiet);
+    validateDietType(dietType);
+
+    return {
+      dietType,
+      hydratedUserData: hydratedUserData as PlanDataUserCommand,
+    };
+  }
+
+  private async recoverRecipePlan(
+    userId: string,
+    userData: NonNullable<Awaited<ReturnType<RepositoryUser["getDataUser"]>>>,
+  ): Promise<DietPlan | null> {
+    const dietType = resolveDietType(undefined, userData.kindOfDiet);
+
+    if (dietType !== "recipes") {
+      return null;
+    }
+
+    try {
+      const hydratedUserData = this.nutritionGoalCalculatorService.hydrate(userData);
+      validateUserData(hydratedUserData as PlanDataUserCommand);
+
+      const result = await this.dietPlanGenerator(
+        hydratedUserData as PlanDataUserCommand,
+        dietType,
+      );
+
+      return this.repositoryUser.saveDietPlan(userId, result.data, dietType);
+    } catch {
+      return null;
+    }
   }
 }
 

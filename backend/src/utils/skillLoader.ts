@@ -3,7 +3,8 @@ import { resolve } from "path";
 
 const SKILL_FILE_NAMES: Record<string, string> = {
     coach: "COACH.md",
-    nutritionist: "NUTRITIONIST.md",
+    "recipe-nutritionist": "RECIPE_NUTRITIONIST.md",
+    "single-food-nutritionist": "SINGLE_FOOD_NUTRITIONIST.md",
     shopper: "SHOPPER.md",
 };
 

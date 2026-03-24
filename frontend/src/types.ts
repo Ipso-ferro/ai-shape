@@ -106,8 +106,8 @@ export interface DietPlanEntry {
     carbs: string;
     fats: string;
   };
-  calories?: number;
-  kilojoules?: number;
+  calories: number;
+  kilojoules: number;
 }
 
 export interface DietPlanDay {

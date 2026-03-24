@@ -1041,11 +1041,9 @@ function App() {
                   instructions: entry.instructions ?? [],
                   preparationTimeMinutes: entry.preparationTimeMinutes,
                 })}
-                onRegenerate={regenerateWeek}
                 currentDietType={(user.kindOfDiet === "recipes" ? "recipes" : "single-food")}
                 weekDays={weekDays}
                 weekProgress={weekProgress}
-                isRegenerating={busyAction === "generate"}
                 pendingMealKey={pendingMealKey}
                 energyUnitPreference={user.energyUnitPreference}
               />
@@ -1315,11 +1313,9 @@ function DietView(props: {
   onSelectDay: (day: number) => void;
   onToggleMeal: (day: DietPlanDay, mealSlot: MealSlot, completed: boolean) => Promise<void>;
   onOpenRecipe: (entry: DietPlanEntry) => void;
-  onRegenerate: (dietType: DietType) => Promise<void>;
   currentDietType: DietType;
   weekDays: WeekDay[];
   weekProgress: Record<string, ProgressDay>;
-  isRegenerating: boolean;
   pendingMealKey: string | null;
   energyUnitPreference: EnergyUnit;
 }) {
@@ -1344,22 +1340,8 @@ function DietView(props: {
             <span className="eyebrow">7-day diet</span>
             <h3>{formatEnergyValue(Math.round(props.plan.summary.dailyCalories * kilojoulesPerCalorie), props.energyUnitPreference)} target</h3>
             <p className="muted-line">
-              Protein {props.plan.summary.macros.protein} · Carbs {props.plan.summary.macros.carbs} · Fats {props.plan.summary.macros.fats}
+              {props.currentDietType === "recipes" ? "Recipe mode" : "Simple meals mode"} · Protein {props.plan.summary.macros.protein} · Carbs {props.plan.summary.macros.carbs} · Fats {props.plan.summary.macros.fats}
             </p>
-          </div>
-
-          <div className="inline-actions">
-            {dietTypeOptions.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={option.value === props.currentDietType ? "toggle active" : "toggle"}
-                onClick={() => props.onRegenerate(option.value)}
-                disabled={props.isRegenerating}
-              >
-                {option.label}
-              </button>
-            ))}
           </div>
         </div>
 
@@ -1409,15 +1391,19 @@ function DietView(props: {
               {entries.map((entry, index) => (
                 <div key={`${meal.slot}-${index}`} className="entry-block">
                   <p className="entry-description">{entry.description}</p>
-                  {props.currentDietType === "recipes" && entry.instructions?.length ? (
-                    <button
-                      type="button"
-                      className="recipe-button"
-                      onClick={() => props.onOpenRecipe(entry)}
-                    >
-                      <span>Open recipe</span>
-                      <ArrowRight className="button-icon" />
-                    </button>
+                  {props.currentDietType === "recipes" ? (
+                    entry.instructions?.length ? (
+                      <button
+                        type="button"
+                        className="recipe-button"
+                        onClick={() => props.onOpenRecipe(entry)}
+                      >
+                        <span>Open recipe</span>
+                        <ArrowRight className="button-icon" />
+                      </button>
+                    ) : (
+                      <p className="muted-line">Recipe mode requires instructions for this meal.</p>
+                    )
                   ) : null}
                   <div className="macro-line">
                     <span>{entry.quantity} {entry.quantityUnit}</span>
