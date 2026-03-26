@@ -4,6 +4,9 @@ import {
   CreateUserResponse,
   DietPlan,
   DietType,
+  UserExerciseLog,
+  UserExerciseLogInput,
+  UserTrackingEntry,
   PlanSelectionOptions,
   ProgressDay,
   ProgressSummary,
@@ -164,6 +167,12 @@ export const api = {
   ),
   getProgressDay: (userId: string, date: string) => request<ProgressDay>(`/progress/users/${userId}/day?date=${date}`),
   getProgressSummary: (userId: string, period: "month" | "year" | "day", date: string) => request<ProgressSummary>(`/progress/users/${userId}/summary?period=${period}&date=${date}`),
+  getTrackingEntries: (userId: string, startDate: string, endDate: string) => request<UserTrackingEntry[]>(
+    `/progress/users/${userId}/tracking?startDate=${startDate}&endDate=${endDate}`,
+  ),
+  getExerciseLogs: (userId: string, startDate: string, endDate: string) => request<UserExerciseLog[]>(
+    `/progress/users/${userId}/exercise-logs?startDate=${startDate}&endDate=${endDate}`,
+  ),
   toggleMeal: (
     userId: string,
     mealSlot: string,
@@ -183,9 +192,10 @@ export const api = {
     userId: string,
     date: string,
     completed: boolean,
+    exerciseLogs?: UserExerciseLogInput[],
   ) => request<ProgressDay>(`/progress/users/${userId}/workout`, {
     method: "PUT",
-    body: JSON.stringify({ date, completed }),
+    body: JSON.stringify({ date, completed, exerciseLogs }),
   }),
   toggleShoppingItem: (
     userId: string,

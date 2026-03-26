@@ -42,6 +42,7 @@ import type {
   DietPlanEntry,
   DietType,
   EnergyUnit,
+  MacroSnapshot,
   MealSlot,
   PlanWeek,
   ProfileDraft,
@@ -50,7 +51,10 @@ import type {
   ShoppingItem,
   ShoppingList,
   StoredSession,
+  UserExerciseLog,
+  UserExerciseLogInput,
   UserProfile,
+  UserTrackingEntry,
   ViewKey,
   WeekDay,
   WorkoutPlan,
@@ -75,6 +79,15 @@ interface SectionGenerationStatus {
   message: string;
   startedAt: string;
   dietType?: DietType;
+}
+
+interface ExerciseLogDraft {
+  date: string;
+  exerciseName: string;
+  setsCompleted: number;
+  repsCompleted: number;
+  weightUsed: number;
+  volume: number;
 }
 
 const emptyDraft: ProfileDraft = {
@@ -144,6 +157,143 @@ const splitList = (value: string): string[] => value
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean);
+
+const shiftDateKey = (date: string, offsetDays: number): string => {
+  const value = new Date(`${date}T00:00:00`);
+  value.setDate(value.getDate() + offsetDays);
+
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+};
+
+const entryKilojoules = (entry: DietPlanEntry): number => (
+  Number.isFinite(entry.kilojoules)
+    ? Math.round(entry.kilojoules)
+    : Math.round((entry.calories ?? 0) * kilojoulesPerCalorie)
+);
+
+const parseMacroValue = (value: string | undefined): number => {
+  if (typeof value !== "string") {
+    return 0;
+  }
+
+  const match = value.match(/-?\d+(\.\d+)?/);
+  return match ? Math.round(Number(match[0])) : 0;
+};
+
+const createEmptyMacroSnapshot = (): MacroSnapshot => ({
+  proteinGrams: 0,
+  carbsGrams: 0,
+  fatsGrams: 0,
+});
+
+const resolveDietDayTargets = (day: DietPlanDay | null): {
+  kjsTarget: number;
+  macrosTarget: MacroSnapshot;
+} => {
+  if (!day) {
+    return {
+      kjsTarget: 0,
+      macrosTarget: createEmptyMacroSnapshot(),
+    };
+  }
+
+  const entries = [
+    day.breakfast,
+    day.snack1,
+    day.lunch,
+    day.dinner,
+    day.snack2,
+    ...day.supplements,
+  ];
+
+  return entries.reduce((current, entry) => ({
+    kjsTarget: current.kjsTarget + entryKilojoules(entry),
+    macrosTarget: {
+      proteinGrams: current.macrosTarget.proteinGrams + parseMacroValue(entry.macros.protein),
+      carbsGrams: current.macrosTarget.carbsGrams + parseMacroValue(entry.macros.carbs),
+      fatsGrams: current.macrosTarget.fatsGrams + parseMacroValue(entry.macros.fats),
+    },
+  }), {
+    kjsTarget: 0,
+    macrosTarget: createEmptyMacroSnapshot(),
+  });
+};
+
+const parsePlannedCount = (value: string | undefined): number => {
+  if (typeof value !== "string") {
+    return 0;
+  }
+
+  const match = value.match(/\d+/);
+  return match ? Number(match[0]) : 0;
+};
+
+const calculateExerciseVolume = (
+  setsCompleted: number,
+  repsCompleted: number,
+  weightUsed: number,
+): number => Math.round(setsCompleted * repsCompleted * weightUsed * 100) / 100;
+
+const buildExerciseLogDrafts = (day: WorkoutPlanDay, date: string): ExerciseLogDraft[] => (
+  day.exercises.map((exercise) => ({
+    date,
+    exerciseName: exercise.name,
+    setsCompleted: parsePlannedCount(exercise.sets),
+    repsCompleted: parsePlannedCount(exercise.reps),
+    weightUsed: 0,
+    volume: 0,
+  }))
+);
+
+const mergeExerciseLogDrafts = (
+  day: WorkoutPlanDay,
+  date: string,
+  logs: ExerciseLogDraft[] | undefined,
+): ExerciseLogDraft[] => {
+  const existingByExercise = new Map((logs ?? []).map((log) => [log.exerciseName, log]));
+
+  return buildExerciseLogDrafts(day, date).map((draft) => {
+    const existing = existingByExercise.get(draft.exerciseName);
+
+    return existing ?? draft;
+  });
+};
+
+const groupExerciseLogsByDate = (logs: UserExerciseLog[]): Record<string, ExerciseLogDraft[]> => (
+  logs.reduce<Record<string, ExerciseLogDraft[]>>((accumulator, log) => {
+    const nextLog: ExerciseLogDraft = {
+      date: log.date,
+      exerciseName: log.exerciseName,
+      setsCompleted: log.setsCompleted,
+      repsCompleted: log.repsCompleted,
+      weightUsed: log.weightUsed,
+      volume: log.volume,
+    };
+
+    accumulator[log.date] = [...(accumulator[log.date] ?? []), nextLog];
+    return accumulator;
+  }, {})
+);
+
+const mapExerciseDraftsToInputs = (logs: ExerciseLogDraft[]): UserExerciseLogInput[] => (
+  logs.map((log) => ({
+    exerciseName: log.exerciseName,
+    setsCompleted: log.setsCompleted,
+    repsCompleted: log.repsCompleted,
+    weightUsed: log.weightUsed,
+  }))
+);
+
+const mapTrackingEntriesByDate = (entries: UserTrackingEntry[]): Record<string, UserTrackingEntry> => (
+  entries.reduce<Record<string, UserTrackingEntry>>((accumulator, entry) => {
+    accumulator[entry.date] = entry;
+    return accumulator;
+  }, {})
+);
 
 const buildWorkoutRefreshStorageKey = (userId: string): string => (
   `${workoutRefreshStoragePrefix}:${userId}`
@@ -538,6 +688,8 @@ function App() {
   const [monthSummary, setMonthSummary] = useState<ProgressSummary | null>(null);
   const [yearSummary, setYearSummary] = useState<ProgressSummary | null>(null);
   const [weekProgress, setWeekProgress] = useState<Record<string, ProgressDay>>({});
+  const [weekTracking, setWeekTracking] = useState<Record<string, UserTrackingEntry>>({});
+  const [exerciseLogsByDate, setExerciseLogsByDate] = useState<Record<string, ExerciseLogDraft[]>>({});
   const [selectedDietDay, setSelectedDietDay] = useState(defaultSelectedDay);
   const [selectedDietType, setSelectedDietType] = useState<DietType>("single-food");
   const [selectedWorkoutDay, setSelectedWorkoutDay] = useState(defaultSelectedDay);
@@ -571,6 +723,9 @@ function App() {
   const weekDays = getCurrentWeek();
   const today = todayKey();
   const weekByNumber = dayDateMap(weekDays);
+  const weekRangeStart = weekDays[0]?.date ?? today;
+  const weekRangeEnd = weekDays[weekDays.length - 1]?.date ?? today;
+  const exerciseHistoryStart = shiftDateKey(today, -27);
   const profileComplete = user ? isProfileReady(user) : false;
   const activeDietType = resolveCurrentDietType(user);
   const activeCurrentShoppingList = shoppingLists.current[activeDietType];
@@ -762,6 +917,8 @@ function App() {
     setMonthSummary(null);
     setYearSummary(null);
     setWeekProgress({});
+    setWeekTracking({});
+    setExerciseLogsByDate({});
     setSelectedDietType("single-food");
     setSelectedShoppingDietType("single-food");
     setSelectedShoppingWeek("current");
@@ -792,7 +949,7 @@ function App() {
 
     try {
       const freshUser = await api.getUser(userId);
-      const [singleFoodDiet, recipeDiet, freshWorkout, singleFoodShoppingCurrent, recipeShoppingCurrent, singleFoodShoppingNext, recipeShoppingNext, freshToday, freshMonth, freshYear] = await Promise.all([
+      const [singleFoodDiet, recipeDiet, freshWorkout, singleFoodShoppingCurrent, recipeShoppingCurrent, singleFoodShoppingNext, recipeShoppingNext, freshToday, freshMonth, freshYear, trackingEntries, exerciseLogs] = await Promise.all([
         api.getDietPlan(userId, { dietType: "single-food" }),
         api.getDietPlan(userId, { dietType: "recipes" }),
         api.getWorkoutPlan(userId),
@@ -803,6 +960,8 @@ function App() {
         api.getProgressDay(userId, today),
         api.getProgressSummary(userId, "month", today),
         api.getProgressSummary(userId, "year", today),
+        api.getTrackingEntries(userId, weekRangeStart, weekRangeEnd),
+        api.getExerciseLogs(userId, exerciseHistoryStart, today),
       ]);
       const activeDietType = resolveCurrentDietType(freshUser);
 
@@ -839,6 +998,8 @@ function App() {
         setMonthSummary(freshMonth);
         setYearSummary(freshYear);
         setWeekProgress(nextWeekProgress);
+        setWeekTracking(mapTrackingEntriesByDate(trackingEntries));
+        setExerciseLogsByDate(groupExerciseLogsByDate(exerciseLogs));
         setSelectedDietType(activeDietType);
         setSelectedShoppingDietType(activeDietType);
         setSelectedShoppingWeek("current");
@@ -861,13 +1022,15 @@ function App() {
   }
 
   async function refreshProgress(userId: string) {
-    const [freshToday, freshMonth, freshYear, progressDays] = await Promise.all([
+    const [freshToday, freshMonth, freshYear, progressDays, trackingEntries, exerciseLogs] = await Promise.all([
       api.getProgressDay(userId, today),
       api.getProgressSummary(userId, "month", today),
       api.getProgressSummary(userId, "year", today),
       Promise.all(
         weekDays.map(async (weekDay) => [weekDay.date, await api.getProgressDay(userId, weekDay.date)] as const),
       ),
+      api.getTrackingEntries(userId, weekRangeStart, weekRangeEnd),
+      api.getExerciseLogs(userId, exerciseHistoryStart, today),
     ]);
 
     const nextWeekProgress = Object.fromEntries(progressDays);
@@ -877,6 +1040,8 @@ function App() {
       setMonthSummary(freshMonth);
       setYearSummary(freshYear);
       setWeekProgress(nextWeekProgress);
+      setWeekTracking(mapTrackingEntriesByDate(trackingEntries));
+      setExerciseLogsByDate(groupExerciseLogsByDate(exerciseLogs));
     });
   }
 
@@ -1215,18 +1380,31 @@ function App() {
     await mealActionQueueRef.current;
   }
 
+  function updateExerciseLogs(date: string, logs: ExerciseLogDraft[]) {
+    setExerciseLogsByDate((current) => ({
+      ...current,
+      [date]: logs,
+    }));
+  }
+
   async function toggleWorkout(day: WorkoutPlanDay, completed: boolean) {
     if (!sessionUserId) {
       return;
     }
 
     const mappedDate = weekByNumber[day.day];
+    const exerciseLogs = mergeExerciseLogDrafts(day, mappedDate, exerciseLogsByDate[mappedDate]);
     const previousWorkoutPlan = workoutPlan;
     setWorkoutPlan((current) => patchWorkoutPlanCompletionState(current, day.day, completed));
     setPendingWorkoutDay(day.day);
 
     try {
-      const result = await api.toggleWorkout(sessionUserId, mappedDate, completed);
+      const result = await api.toggleWorkout(
+        sessionUserId,
+        mappedDate,
+        completed,
+        completed ? mapExerciseDraftsToInputs(exerciseLogs) : [],
+      );
       setWeekProgress((current) => ({ ...current, [mappedDate]: result }));
 
       if (mappedDate === today) {
@@ -1487,6 +1665,10 @@ function App() {
                 todayProgress={todayProgress}
                 weekDays={weekDays}
                 weekProgress={weekProgress}
+                weekTracking={weekTracking}
+                exerciseLogsByDate={exerciseLogsByDate}
+                dietPlan={dietPlans[activeDietType]}
+                workoutPlan={workoutPlan}
                 shoppingList={activeCurrentShoppingList}
                 onGenerate={() => regenerateWeek(activeDietType)}
                 isRegeneratingPlan={isRegeneratingPlan}
@@ -1525,6 +1707,8 @@ function App() {
                 selectedDay={selectedWorkoutDay}
                 onSelectDay={setSelectedWorkoutDay}
                 onToggleWorkout={toggleWorkout}
+                exerciseLogsByDate={exerciseLogsByDate}
+                onUpdateExerciseLogs={updateExerciseLogs}
                 onRegenerateWorkout={() => regenerateWorkoutPlan()}
                 weekDays={weekDays}
                 weekProgress={weekProgress}
@@ -1599,6 +1783,10 @@ function DashboardView(props: {
   todayProgress: ProgressDay | null;
   weekDays: WeekDay[];
   weekProgress: Record<string, ProgressDay>;
+  weekTracking: Record<string, UserTrackingEntry>;
+  exerciseLogsByDate: Record<string, ExerciseLogDraft[]>;
+  dietPlan: DietPlan | null;
+  workoutPlan: WorkoutPlan | null;
   shoppingList: ShoppingList | null;
   onGenerate: () => void;
   isRegeneratingPlan: boolean;
@@ -1609,6 +1797,10 @@ function DashboardView(props: {
     todayProgress,
     weekDays,
     weekProgress,
+    weekTracking,
+    exerciseLogsByDate,
+    dietPlan,
+    workoutPlan,
     shoppingList,
     energyUnitPreference,
   } = props;
@@ -1687,123 +1879,342 @@ function DashboardView(props: {
       </section>
 
       <section className="panel span-full">
-        <BodyCompositionChart
-          user={user}
+        <DailyEnergyChart
           weekDays={weekDays}
-          weekProgress={weekProgress}
+          weekTracking={weekTracking}
+          dietPlan={dietPlan}
           energyUnitPreference={energyUnitPreference}
         />
+      </section>
+
+      <section className="panel span-full">
+        <MacroBreakdownChart
+          weekDays={weekDays}
+          weekTracking={weekTracking}
+          dietPlan={dietPlan}
+        />
+      </section>
+
+      <section className="panel span-full">
+        <ProgressiveOverloadChart
+          exerciseLogsByDate={exerciseLogsByDate}
+          workoutPlan={workoutPlan}
+        />
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <span className="eyebrow">Recomposition chart</span>
+            <h3>Body fat vs lean mass</h3>
+          </div>
+        </div>
+        <p className="empty-line">
+          This chart needs real body-metric check-ins like body weight and body-fat percentage.
+        </p>
       </section>
     </div>
   );
 }
 
-function BodyCompositionChart(props: {
-  user: UserProfile;
+function DailyEnergyChart(props: {
   weekDays: WeekDay[];
-  weekProgress: Record<string, ProgressDay>;
+  weekTracking: Record<string, UserTrackingEntry>;
+  dietPlan: DietPlan | null;
   energyUnitPreference: EnergyUnit;
 }) {
-  const chartWidth = 640;
-  const chartHeight = 240;
+  const chartWidth = 680;
+  const chartHeight = 250;
   const paddingX = 28;
-  const paddingTop = 20;
-  const paddingBottom = 38;
-  const usableHeight = chartHeight - paddingTop - paddingBottom;
-  const usableWidth = chartWidth - (paddingX * 2);
-  const target = Math.max(props.user.kilojoulesTarget, 1);
+  const paddingTop = 18;
+  const paddingBottom = 42;
+  const columnWidth = (chartWidth - (paddingX * 2)) / Math.max(props.weekDays.length, 1);
+  const maxValue = Math.max(
+    1,
+    ...props.weekDays.flatMap((weekDay) => {
+      const tracking = props.weekTracking[weekDay.date];
+      const dietDay = props.dietPlan?.days.find((day) => day.day === weekDay.dayNumber) ?? null;
+      const targets = resolveDietDayTargets(dietDay);
 
-  const points = props.weekDays.map((weekDay, index) => {
-    const progress = props.weekProgress[weekDay.date];
-    const netKilojoules = progress?.totals.netKilojoules ?? 0;
-    const burnedKilojoules = progress?.totals.kilojoulesBurned ?? 0;
-    const mealsCompleted = progress?.totals.mealsCompleted ?? 0;
-    const workoutCompleted = progress?.workout.completed ?? false;
-    const intakeRatio = netKilojoules / target;
-    const deficitRatio = Math.max(0, (target - netKilojoules) / target);
-    const muscleGrowth = Math.max(
-      0,
-      Math.min(100, (intakeRatio * 42) + (mealsCompleted * 5) + (workoutCompleted ? 26 : 8)),
-    );
-    const fatBurn = Math.max(
-      0,
-      Math.min(100, (deficitRatio * 72) + (burnedKilojoules > 0 ? 16 : 0) + (workoutCompleted ? 10 : 0)),
-    );
-
-    return {
-      label: weekDay.shortLabel,
-      x: paddingX + ((usableWidth / Math.max(props.weekDays.length - 1, 1)) * index),
-      muscleGrowth,
-      fatBurn,
-      netKilojoules,
-    };
-  });
-
-  const resolveY = (value: number): number => (
-    paddingTop + ((100 - value) / 100) * usableHeight
+      return [tracking?.kjsConsumed ?? 0, tracking?.kjsTarget ?? targets.kjsTarget];
+    }),
   );
 
-  const musclePath = points.map((point) => `${point.x},${resolveY(point.muscleGrowth)}`).join(" ");
-  const fatPath = points.map((point) => `${point.x},${resolveY(point.fatBurn)}`).join(" ");
-  const averageNet = points.length > 0
-    ? Math.round(points.reduce((sum, point) => sum + point.netKilojoules, 0) / points.length)
-    : 0;
-  const averageMuscle = points.length > 0
-    ? Math.round(points.reduce((sum, point) => sum + point.muscleGrowth, 0) / points.length)
-    : 0;
-  const averageFat = points.length > 0
-    ? Math.round(points.reduce((sum, point) => sum + point.fatBurn, 0) / points.length)
-    : 0;
+  const resolveHeight = (value: number): number => (
+    ((chartHeight - paddingTop - paddingBottom) * value) / maxValue
+  );
 
   return (
     <>
       <div className="panel-header">
         <div>
-          <span className="eyebrow">Body composition trend</span>
-          <h3>Muscle growth vs fat burn</h3>
-          <p className="muted-line">
-            Estimation based on weekly energy balance and completed workouts.
-          </p>
+          <span className="eyebrow">Daily adherence</span>
+          <h3>Calories vs target</h3>
+          <p className="muted-line">Each day compares consumed energy against the planned food target.</p>
         </div>
       </div>
 
       <div className="chart-legend">
-        <span className="chart-legend-item muscle">Muscle growth</span>
-        <span className="chart-legend-item fat">Fat burn</span>
+        <span className="chart-legend-item energy-target">Target</span>
+        <span className="chart-legend-item energy-consumed">Consumed</span>
       </div>
 
       <div className="body-chart-shell">
-        <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="body-chart" role="img" aria-label="Estimated muscle growth versus fat burn trend">
-          {[0, 25, 50, 75, 100].map((value) => (
-            <g key={value}>
-              <line
-                x1={paddingX}
-                y1={resolveY(value)}
-                x2={chartWidth - paddingX}
-                y2={resolveY(value)}
-                className="body-chart-grid"
-              />
-              <text x={6} y={resolveY(value) + 4} className="body-chart-axis">{value}</text>
-            </g>
-          ))}
+        <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="body-chart" role="img" aria-label="Daily calories versus target">
+          {props.weekDays.map((weekDay, index) => {
+            const tracking = props.weekTracking[weekDay.date];
+            const dietDay = props.dietPlan?.days.find((day) => day.day === weekDay.dayNumber) ?? null;
+            const targets = resolveDietDayTargets(dietDay);
+            const consumed = tracking?.kjsConsumed ?? 0;
+            const target = tracking?.kjsTarget ?? targets.kjsTarget;
+            const targetHeight = resolveHeight(target);
+            const consumedHeight = resolveHeight(consumed);
+            const x = paddingX + (index * columnWidth) + (columnWidth * 0.18);
+            const width = columnWidth * 0.64;
 
-          <polyline points={fatPath} className="body-chart-line fat" />
-          <polyline points={musclePath} className="body-chart-line muscle" />
-
-          {points.map((point) => (
-            <g key={point.label}>
-              <circle cx={point.x} cy={resolveY(point.fatBurn)} r={4} className="body-chart-dot fat" />
-              <circle cx={point.x} cy={resolveY(point.muscleGrowth)} r={4} className="body-chart-dot muscle" />
-              <text x={point.x} y={chartHeight - 10} textAnchor="middle" className="body-chart-axis">{point.label}</text>
-            </g>
-          ))}
+            return (
+              <g key={weekDay.date}>
+                <rect
+                  x={x}
+                  y={chartHeight - paddingBottom - targetHeight}
+                  width={width}
+                  height={targetHeight}
+                  rx={12}
+                  className="energy-target-bar"
+                />
+                <rect
+                  x={x}
+                  y={chartHeight - paddingBottom - consumedHeight}
+                  width={width}
+                  height={consumedHeight}
+                  rx={12}
+                  className="energy-consumed-bar"
+                />
+                <text
+                  x={x + (width / 2)}
+                  y={chartHeight - 12}
+                  textAnchor="middle"
+                  className="body-chart-axis"
+                >
+                  {weekDay.shortLabel}
+                </text>
+              </g>
+            );
+          })}
         </svg>
       </div>
 
       <div className="stats-grid composition-stats">
-        <MetricCard title="Avg muscle" value={`${averageMuscle}%`} detail="Estimated weekly signal" />
-        <MetricCard title="Avg fat burn" value={`${averageFat}%`} detail="Estimated weekly signal" />
-        <MetricCard title="Avg net energy" value={formatEnergyValue(averageNet, props.energyUnitPreference)} detail="Across this week" />
+        {props.weekDays.map((weekDay) => {
+          const tracking = props.weekTracking[weekDay.date];
+          const dietDay = props.dietPlan?.days.find((day) => day.day === weekDay.dayNumber) ?? null;
+          const targets = resolveDietDayTargets(dietDay);
+          const consumed = tracking?.kjsConsumed ?? 0;
+          const target = tracking?.kjsTarget ?? targets.kjsTarget;
+          const adherence = target > 0 ? Math.round((consumed / target) * 100) : 0;
+
+          return (
+            <MetricCard
+              key={weekDay.date}
+              title={weekDay.shortLabel}
+              value={`${adherence}%`}
+              detail={`${formatEnergyValue(consumed, props.energyUnitPreference)} / ${formatEnergyValue(target, props.energyUnitPreference)}`}
+            />
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+function MacroBreakdownChart(props: {
+  weekDays: WeekDay[];
+  weekTracking: Record<string, UserTrackingEntry>;
+  dietPlan: DietPlan | null;
+}) {
+  return (
+    <>
+      <div className="panel-header">
+        <div>
+          <span className="eyebrow">Macro balance</span>
+          <h3>Protein, carbs, and fats</h3>
+          <p className="muted-line">Tracked macro intake against the planned day structure.</p>
+        </div>
+      </div>
+
+      <div className="chart-legend">
+        <span className="chart-legend-item macro-protein">Protein</span>
+        <span className="chart-legend-item macro-carbs">Carbs</span>
+        <span className="chart-legend-item macro-fats">Fats</span>
+      </div>
+
+      <div className="macro-breakdown-list">
+        {props.weekDays.map((weekDay) => {
+          const tracking = props.weekTracking[weekDay.date];
+          const dietDay = props.dietPlan?.days.find((day) => day.day === weekDay.dayNumber) ?? null;
+          const targets = resolveDietDayTargets(dietDay);
+          const consumed = tracking?.macrosConsumed ?? createEmptyMacroSnapshot();
+          const totalConsumed = Math.max(
+            consumed.proteinGrams + consumed.carbsGrams + consumed.fatsGrams,
+            1,
+          );
+          const totalTarget = Math.max(
+            targets.macrosTarget.proteinGrams + targets.macrosTarget.carbsGrams + targets.macrosTarget.fatsGrams,
+            0,
+          );
+
+          return (
+            <article key={weekDay.date} className="macro-breakdown-row">
+              <div>
+                <strong>{weekDay.label}</strong>
+                <span>{totalConsumed}g consumed{totalTarget > 0 ? ` / ${totalTarget}g target` : ""}</span>
+              </div>
+              <div className="macro-stack" aria-label={`${weekDay.label} macro balance`}>
+                <span className="macro-segment protein" style={{ width: `${(consumed.proteinGrams / totalConsumed) * 100}%` }} />
+                <span className="macro-segment carbs" style={{ width: `${(consumed.carbsGrams / totalConsumed) * 100}%` }} />
+                <span className="macro-segment fats" style={{ width: `${(consumed.fatsGrams / totalConsumed) * 100}%` }} />
+              </div>
+              <div className="macro-breakdown-values">
+                <span>P {consumed.proteinGrams}g</span>
+                <span>C {consumed.carbsGrams}g</span>
+                <span>F {consumed.fatsGrams}g</span>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+function ProgressiveOverloadChart(props: {
+  exerciseLogsByDate: Record<string, ExerciseLogDraft[]>;
+  workoutPlan: WorkoutPlan | null;
+}) {
+  const allLogs = Object.values(props.exerciseLogsByDate).flat();
+  const volumeByExercise = new Map<string, number>();
+
+  for (const log of allLogs) {
+    volumeByExercise.set(log.exerciseName, (volumeByExercise.get(log.exerciseName) ?? 0) + log.volume);
+  }
+
+  const activeExercises = Array.from(volumeByExercise.entries())
+    .filter(([, volume]) => volume > 0)
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 3)
+    .map(([exerciseName]) => exerciseName);
+
+  if (activeExercises.length === 0) {
+    return (
+      <>
+        <div className="panel-header">
+          <div>
+            <span className="eyebrow">Progressive overload</span>
+            <h3>Exercise volume over time</h3>
+          </div>
+        </div>
+        <p className="empty-line">
+          Add weight used for completed workouts to start drawing volume trends here.
+        </p>
+      </>
+    );
+  }
+
+  const dates = Array.from(new Set(allLogs.map((log) => log.date))).sort();
+  const chartWidth = 680;
+  const chartHeight = 250;
+  const paddingX = 34;
+  const paddingTop = 18;
+  const paddingBottom = 42;
+  const usableHeight = chartHeight - paddingTop - paddingBottom;
+  const usableWidth = chartWidth - (paddingX * 2);
+  const palette = ["#ef7f45", "#2f7f6d", "#4669f2"];
+  const series = activeExercises.map((exerciseName, index) => ({
+    exerciseName,
+    color: palette[index] ?? "#ef7f45",
+    points: dates.map((date, dateIndex) => {
+      const volume = allLogs
+        .filter((log) => log.date === date && log.exerciseName === exerciseName)
+        .reduce((sum, log) => sum + log.volume, 0);
+
+      return {
+        date,
+        label: humanDate(date).slice(0, 3),
+        x: paddingX + ((usableWidth / Math.max(dates.length - 1, 1)) * dateIndex),
+        volume,
+      };
+    }),
+  }));
+  const maxVolume = Math.max(1, ...series.flatMap((item) => item.points.map((point) => point.volume)));
+  const resolveY = (value: number): number => (
+    paddingTop + ((maxVolume - value) / maxVolume) * usableHeight
+  );
+
+  return (
+    <>
+      <div className="panel-header">
+        <div>
+          <span className="eyebrow">Progressive overload</span>
+          <h3>Exercise volume over time</h3>
+          <p className="muted-line">Volume = sets × reps × weight used.</p>
+        </div>
+      </div>
+
+      <div className="chart-legend">
+        {series.map((item) => (
+          <span
+            key={item.exerciseName}
+            className="chart-legend-item"
+            style={{ ["--legend-color" as string]: item.color }}
+          >
+            {item.exerciseName}
+          </span>
+        ))}
+      </div>
+
+      <div className="body-chart-shell">
+        <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="body-chart" role="img" aria-label="Exercise volume over time">
+          {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+            const value = Math.round(maxVolume * ratio);
+            const y = resolveY(value);
+
+            return (
+              <g key={ratio}>
+                <line x1={paddingX} y1={y} x2={chartWidth - paddingX} y2={y} className="body-chart-grid" />
+                <text x={6} y={y + 4} className="body-chart-axis">{formatNumber(value)}</text>
+              </g>
+            );
+          })}
+
+          {series.map((item) => (
+            <g key={item.exerciseName}>
+              <polyline
+                points={item.points.map((point) => `${point.x},${resolveY(point.volume)}`).join(" ")}
+                className="body-chart-line"
+                style={{ stroke: item.color }}
+              />
+              {item.points.map((point) => (
+                <circle
+                  key={`${item.exerciseName}-${point.date}`}
+                  cx={point.x}
+                  cy={resolveY(point.volume)}
+                  r={4}
+                  style={{ fill: item.color }}
+                />
+              ))}
+            </g>
+          ))}
+
+          {dates.map((date, index) => {
+            const x = paddingX + ((usableWidth / Math.max(dates.length - 1, 1)) * index);
+
+            return (
+              <text key={date} x={x} y={chartHeight - 12} textAnchor="middle" className="body-chart-axis">
+                {new Date(`${date}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+              </text>
+            );
+          })}
+        </svg>
       </div>
     </>
   );
@@ -1884,6 +2295,7 @@ function DietView(props: {
   const activeDay = plan.days.find((day) => day.day === props.selectedDay) ?? plan.days[0];
   const activeDate = props.weekDays.find((item) => item.dayNumber === activeDay.day)?.date ?? todayKey();
   const visibleMeals = getRenderableMealConfig(activeDay);
+  const isFutureDay = activeDate > todayKey();
 
   return (
     <div className="stack-page">
@@ -1956,9 +2368,13 @@ function DietView(props: {
                   type="button"
                   className={done ? "check-button active" : "check-button"}
                   onClick={() => props.onToggleMeal(activeDay, meal.slot, !done, props.selectedDietType)}
-                  disabled={props.pendingMealKey === currentMealKey}
+                  disabled={props.pendingMealKey === currentMealKey || isFutureDay}
                 >
-                  {props.pendingMealKey === currentMealKey ? "Saving..." : done ? "Eaten" : "Mark eaten"}
+                  {props.pendingMealKey === currentMealKey
+                    ? "Saving..."
+                    : isFutureDay
+                      ? "Locked"
+                      : done ? "Eaten" : "Mark eaten"}
                 </button>
               </div>
 
@@ -2008,6 +2424,8 @@ function WorkoutView(props: {
   selectedDay: number;
   onSelectDay: (day: number) => void;
   onToggleWorkout: (day: WorkoutPlanDay, completed: boolean) => Promise<void>;
+  exerciseLogsByDate: Record<string, ExerciseLogDraft[]>;
+  onUpdateExerciseLogs: (date: string, logs: ExerciseLogDraft[]) => void;
   onRegenerateWorkout: () => void;
   weekDays: WeekDay[];
   weekProgress: Record<string, ProgressDay>;
@@ -2032,6 +2450,13 @@ function WorkoutView(props: {
   }
 
   const activeDay = props.plan.days.find((day) => day.day === props.selectedDay) ?? props.plan.days[0];
+  const activeDate = props.weekDays.find((item) => item.dayNumber === activeDay.day)?.date ?? todayKey();
+  const isFutureDay = activeDate > todayKey();
+  const exerciseLogs = mergeExerciseLogDrafts(
+    activeDay,
+    activeDate,
+    props.exerciseLogsByDate[activeDate],
+  );
   const workoutCompleted = activeDay.completed ?? false;
 
   return (
@@ -2101,11 +2526,13 @@ function WorkoutView(props: {
             type="button"
             className={workoutCompleted ? "check-button active" : "check-button"}
             onClick={() => props.onToggleWorkout(activeDay, !workoutCompleted)}
-            disabled={props.pendingWorkoutDay === activeDay.day}
+            disabled={props.pendingWorkoutDay === activeDay.day || isFutureDay}
           >
             {props.pendingWorkoutDay === activeDay.day
               ? "Saving..."
-              : workoutCompleted ? "Completed" : "Mark complete"}
+              : isFutureDay
+                ? "Locked"
+                : workoutCompleted ? "Completed" : "Mark complete"}
           </button>
         </div>
 
@@ -2127,19 +2554,108 @@ function WorkoutView(props: {
           </div>
 
           <div className="exercise-list">
-            {activeDay.exercises.map((exercise) => (
-              <article key={exercise.name} className="exercise-card">
-                <div className="exercise-header">
-                  <h4>{exercise.name}</h4>
-                  <span>{exercise.sets} x {exercise.reps}</span>
-                </div>
-                <p>{exercise.notes}</p>
-                <div className="macro-line">
-                  <span>Rest {exercise.rest}</span>
-                  <span>{exercise.alternatives?.join(" · ") || "No alternatives"}</span>
-                </div>
-              </article>
-            ))}
+            {activeDay.exercises.map((exercise) => {
+              const exerciseLog = exerciseLogs.find((log) => log.exerciseName === exercise.name) ?? {
+                date: activeDate,
+                exerciseName: exercise.name,
+                setsCompleted: parsePlannedCount(exercise.sets),
+                repsCompleted: parsePlannedCount(exercise.reps),
+                weightUsed: 0,
+                volume: 0,
+              };
+              const inputsDisabled = workoutCompleted
+                || isFutureDay
+                || props.pendingWorkoutDay === activeDay.day;
+
+              const updateExerciseLog = (
+                field: "setsCompleted" | "repsCompleted" | "weightUsed",
+                value: number,
+              ) => {
+                const nextLogs = exerciseLogs.map((log) => {
+                  if (log.exerciseName !== exercise.name) {
+                    return log;
+                  }
+
+                  const nextLog = {
+                    ...log,
+                    [field]: value,
+                  };
+
+                  return {
+                    ...nextLog,
+                    volume: calculateExerciseVolume(
+                      nextLog.setsCompleted,
+                      nextLog.repsCompleted,
+                      nextLog.weightUsed,
+                    ),
+                  };
+                });
+
+                props.onUpdateExerciseLogs(activeDate, nextLogs);
+              };
+
+              return (
+                <article key={exercise.name} className="exercise-card">
+                  <div className="exercise-header">
+                    <h4>{exercise.name}</h4>
+                    <span>{exercise.sets} x {exercise.reps}</span>
+                  </div>
+                  <p>{exercise.notes}</p>
+                  <div className="macro-line">
+                    <span>Rest {exercise.rest}</span>
+                    <span>{exercise.alternatives?.join(" · ") || "No alternatives"}</span>
+                  </div>
+                  <div className="exercise-log-grid">
+                    <label className="exercise-log-field">
+                      <span>Sets done</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={exerciseLog.setsCompleted}
+                        onChange={(event) => updateExerciseLog(
+                          "setsCompleted",
+                          Math.max(0, Number(event.target.value) || 0),
+                        )}
+                        disabled={inputsDisabled}
+                      />
+                    </label>
+                    <label className="exercise-log-field">
+                      <span>Reps done</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={exerciseLog.repsCompleted}
+                        onChange={(event) => updateExerciseLog(
+                          "repsCompleted",
+                          Math.max(0, Number(event.target.value) || 0),
+                        )}
+                        disabled={inputsDisabled}
+                      />
+                    </label>
+                    <label className="exercise-log-field">
+                      <span>Weight used</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        value={exerciseLog.weightUsed}
+                        onChange={(event) => updateExerciseLog(
+                          "weightUsed",
+                          Math.max(0, Number(event.target.value) || 0),
+                        )}
+                        disabled={inputsDisabled}
+                      />
+                    </label>
+                  </div>
+                  <div className="macro-line">
+                    <span>Volume {formatNumber(exerciseLog.volume)}</span>
+                    <span>{isFutureDay ? "Available on the active date" : workoutCompleted ? "Workout saved" : "Saved when completed"}</span>
+                  </div>
+                </article>
+              );
+            })}
           </div>
         </div>
       </section>

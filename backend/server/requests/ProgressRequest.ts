@@ -1,4 +1,4 @@
-import { DietType, PlanWeek, TrackableMealSlot } from "../../src/types";
+import { DietType, PlanWeek, TrackableMealSlot, UserExerciseLogInput } from "../../src/types";
 
 export interface ProgressRouteParams {
   id: string;
@@ -13,6 +13,7 @@ export interface TrackProgressRequestBody {
   completed?: boolean;
   dietType?: DietType;
   week?: PlanWeek;
+  exerciseLogs?: UserExerciseLogInput[];
 }
 
 export interface ProgressDayRequestQuery {
@@ -22,4 +23,9 @@ export interface ProgressDayRequestQuery {
 export interface ProgressSummaryRequestQuery {
   period?: string;
   date?: string;
+}
+
+export interface ProgressRangeRequestQuery {
+  startDate?: string;
+  endDate?: string;
 }

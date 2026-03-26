@@ -160,18 +160,33 @@ CREATE TABLE IF NOT EXISTS user_progress_tracking (
 
 CREATE TABLE IF NOT EXISTS user_tracking (
   user_id CHAR(36) NOT NULL,
-  tracked_on DATE NOT NULL,
-  target_kilojoules INT UNSIGNED NOT NULL DEFAULT 0,
-  protein_grams INT UNSIGNED NOT NULL DEFAULT 0,
-  carbs_grams INT UNSIGNED NOT NULL DEFAULT 0,
-  fats_grams INT UNSIGNED NOT NULL DEFAULT 0,
-  daily_calories_burned INT UNSIGNED NOT NULL DEFAULT 0,
-  daily_kilojoules_consumed INT UNSIGNED NOT NULL DEFAULT 0,
-  daily_kilojoules_burned INT UNSIGNED NOT NULL DEFAULT 0,
+  date DATE NOT NULL,
+  kjs_consumed INT UNSIGNED NOT NULL DEFAULT 0,
+  macros_consumed JSON NOT NULL,
+  kjs_target INT UNSIGNED NOT NULL DEFAULT 0,
+  macros_target JSON NOT NULL,
+  kjs_burned INT UNSIGNED NOT NULL DEFAULT 0,
+  kjs_burned_target INT UNSIGNED NOT NULL DEFAULT 0,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (user_id),
+  PRIMARY KEY (user_id, date),
   CONSTRAINT fk_user_tracking_user
+    FOREIGN KEY (user_id) REFERENCES users(id)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS user_exercise_logs (
+  user_id CHAR(36) NOT NULL,
+  date DATE NOT NULL,
+  exercise_name VARCHAR(255) NOT NULL,
+  sets_completed INT UNSIGNED NOT NULL DEFAULT 0,
+  reps_completed INT UNSIGNED NOT NULL DEFAULT 0,
+  weight_used DECIMAL(10,2) NOT NULL DEFAULT 0,
+  volume DECIMAL(12,2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, date, exercise_name),
+  CONSTRAINT fk_user_exercise_logs_user
     FOREIGN KEY (user_id) REFERENCES users(id)
     ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -203,18 +203,33 @@ CREATE TABLE IF NOT EXISTS shopping_market_recipes_list (
 
 CREATE TABLE IF NOT EXISTS user_tracking (
   user_id CHAR(36) NOT NULL,
-  tracked_on DATE NOT NULL,
-  target_kilojoules INT UNSIGNED NOT NULL DEFAULT 0,
-  protein_grams INT UNSIGNED NOT NULL DEFAULT 0,
-  carbs_grams INT UNSIGNED NOT NULL DEFAULT 0,
-  fats_grams INT UNSIGNED NOT NULL DEFAULT 0,
-  daily_calories_burned INT UNSIGNED NOT NULL DEFAULT 0,
-  daily_kilojoules_consumed INT UNSIGNED NOT NULL DEFAULT 0,
-  daily_kilojoules_burned INT UNSIGNED NOT NULL DEFAULT 0,
+  date DATE NOT NULL,
+  kjs_consumed INT UNSIGNED NOT NULL DEFAULT 0,
+  macros_consumed JSON NOT NULL,
+  kjs_target INT UNSIGNED NOT NULL DEFAULT 0,
+  macros_target JSON NOT NULL,
+  kjs_burned INT UNSIGNED NOT NULL DEFAULT 0,
+  kjs_burned_target INT UNSIGNED NOT NULL DEFAULT 0,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (user_id),
+  PRIMARY KEY (user_id, date),
   CONSTRAINT fk_user_tracking_user
+    FOREIGN KEY (user_id) REFERENCES users(id)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS user_exercise_logs (
+  user_id CHAR(36) NOT NULL,
+  date DATE NOT NULL,
+  exercise_name VARCHAR(255) NOT NULL,
+  sets_completed INT UNSIGNED NOT NULL DEFAULT 0,
+  reps_completed INT UNSIGNED NOT NULL DEFAULT 0,
+  weight_used DECIMAL(10,2) NOT NULL DEFAULT 0,
+  volume DECIMAL(12,2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, date, exercise_name),
+  CONSTRAINT fk_user_exercise_logs_user
     FOREIGN KEY (user_id) REFERENCES users(id)
     ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -254,7 +269,8 @@ Store array fields as JSON arrays, for example:
 - each meal JSON should include object, description, quantity, quantityUnit, ingredients[], macros, calories, kilojoules
 - user_workout_plan_days now includes row ids and a `complete` boolean tied to workout completion
 - user_progress_tracking stores one row per user per calendar day with meal/workout completion timestamps and consumed/burned totals for daily, monthly, and yearly progress summaries
-- user_tracking stores the active server-side tracking summary with kJ target, daily macros, and burn totals
+- user_tracking stores one row per user per day with consumed kJ/macros, target kJ/macros, and burned kJ totals
+- user_exercise_logs stores per-exercise performed sets, reps, weight used, and calculated volume by user and date
 - user_tracking_history stores daily kJ consumed and kJ burned by user and tracked day
 - shopping_market_single_food_list and shopping_market_recipes_list store the weekly market lists as JSON by user_id + plan_week and are expected to use `gr` for foods and `ml` for liquids
 */

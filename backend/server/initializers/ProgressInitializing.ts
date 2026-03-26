@@ -17,6 +17,8 @@ export const initializeProgressRoutes = (
   router.use("/users/:id", requireUserAccess);
   router.get("/users/:id/day", controller.getDay);
   router.get("/users/:id/summary", controller.getSummary);
+  router.get("/users/:id/tracking", controller.getTracking);
+  router.get("/users/:id/exercise-logs", controller.getExerciseLogs);
   router.put("/users/:id/meals/:mealSlot", controller.trackMeal);
   router.put("/users/:id/workout", controller.trackWorkout);
 

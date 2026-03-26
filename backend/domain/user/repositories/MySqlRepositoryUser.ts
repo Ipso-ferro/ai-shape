@@ -24,13 +24,17 @@ import {
   DietPlanDayMealState,
   DietType,
   EnergyUnit,
+  MacroSnapshot,
   PlanSelectionOptions,
   PlanWeek,
   SaveDietPlanOptions,
   ShoppingList,
   TrackableMealSlot,
+  UserExerciseLog,
+  UserExerciseLogInput,
   UserProgressDay,
   UserProgressMealStatus,
+  UserTrackingEntry,
   WorkoutExercise,
   WorkoutPlan,
 } from "../../../src/types";
@@ -161,14 +165,23 @@ interface UserShoppingListRow extends RowDataPacket {
 
 interface UserTrackingRow extends RowDataPacket {
   user_id: string;
-  tracked_on: string | Date;
-  target_kilojoules: number | string;
-  protein_grams: number | string;
-  carbs_grams: number | string;
-  fats_grams: number | string;
-  daily_calories_burned: number | string;
-  daily_kilojoules_consumed: number | string;
-  daily_kilojoules_burned: number | string;
+  date: string | Date;
+  kjs_consumed: number | string;
+  macros_consumed: MacroSnapshot | string | null;
+  kjs_target: number | string;
+  macros_target: MacroSnapshot | string | null;
+  kjs_burned: number | string;
+  kjs_burned_target: number | string;
+}
+
+interface UserExerciseLogRow extends RowDataPacket {
+  user_id: string;
+  date: string | Date;
+  exercise_name: string;
+  sets_completed: number | string;
+  reps_completed: number | string;
+  weight_used: number | string;
+  volume: number | string;
 }
 
 interface DatabaseError {
@@ -291,6 +304,22 @@ const parseJsonValue = <T>(value: unknown, fallback: T): T => {
   return value as T;
 };
 
+const createEmptyMacroSnapshot = (): MacroSnapshot => ({
+  proteinGrams: 0,
+  carbsGrams: 0,
+  fatsGrams: 0,
+});
+
+const parseMacroSnapshot = (value: unknown): MacroSnapshot => {
+  const parsed = parseJsonValue<Partial<MacroSnapshot> | null>(value, null);
+
+  return {
+    proteinGrams: toNumber(parsed?.proteinGrams ?? null),
+    carbsGrams: toNumber(parsed?.carbsGrams ?? null),
+    fatsGrams: toNumber(parsed?.fatsGrams ?? null),
+  };
+};
+
 const normaliseShoppingItemId = (value: string): string => {
   const normalized = value
     .trim()
@@ -394,18 +423,6 @@ const toSqlDateTime = (value: string | null): string | null => {
   }
 
   return value.slice(0, 19).replace("T", " ");
-};
-
-const currentSummaryResetHour = 12;
-
-const resolveActiveTrackingDate = (now = new Date()): string => {
-  const cursor = new Date(now);
-
-  if (cursor.getHours() < currentSummaryResetHour) {
-    cursor.setDate(cursor.getDate() - 1);
-  }
-
-  return toDateString(cursor);
 };
 
 const assertNonEmptyString = (value: string, fieldName: string): void => {
@@ -542,6 +559,38 @@ const assertUserProgressDay = (progressDay: UserProgressDay): void => {
   assertFiniteNumber(progressDay.planDayNumber, "planDayNumber");
   assertNonEmptyString(progressDay.planDayName, "planDayName");
 };
+
+const assertMacroSnapshot = (snapshot: MacroSnapshot, fieldName: string): void => {
+  assertFiniteNumber(snapshot.proteinGrams, `${fieldName}.proteinGrams`);
+  assertFiniteNumber(snapshot.carbsGrams, `${fieldName}.carbsGrams`);
+  assertFiniteNumber(snapshot.fatsGrams, `${fieldName}.fatsGrams`);
+};
+
+const assertUserTrackingEntry = (entry: UserTrackingEntry): void => {
+  assertNonEmptyString(entry.userId, "userId");
+  assertNonEmptyString(entry.date, "date");
+  assertFiniteNumber(entry.kjsConsumed, "kjsConsumed");
+  assertMacroSnapshot(entry.macrosConsumed, "macrosConsumed");
+  assertFiniteNumber(entry.kjsTarget, "kjsTarget");
+  assertMacroSnapshot(entry.macrosTarget, "macrosTarget");
+  assertFiniteNumber(entry.kjsBurned, "kjsBurned");
+  assertFiniteNumber(entry.kjsBurnedTarget, "kjsBurnedTarget");
+};
+
+const assertUserExerciseLogInput = (log: UserExerciseLogInput): void => {
+  assertNonEmptyString(log.exerciseName, "exerciseName");
+  assertFiniteNumber(log.setsCompleted, "setsCompleted");
+  assertFiniteNumber(log.repsCompleted, "repsCompleted");
+  assertFiniteNumber(log.weightUsed, "weightUsed");
+
+  if (log.setsCompleted < 0 || log.repsCompleted < 0 || log.weightUsed < 0) {
+    throw new ValidationError("Exercise log values cannot be negative.");
+  }
+};
+
+const resolveExerciseVolume = (log: UserExerciseLogInput): number => (
+  Math.round(log.setsCompleted * log.repsCompleted * log.weightUsed * 100) / 100
+);
 
 const mapRowToDataUserCommand = (row: UserRow): DataUserCommand => ({
   id: row.id,
@@ -741,6 +790,31 @@ const mapRowToUserProgressDay = (
   },
 });
 
+const mapRowToUserTrackingEntry = (
+  row: UserTrackingRow,
+): UserTrackingEntry => ({
+  userId: row.user_id,
+  date: toDateString(row.date),
+  kjsConsumed: toNumber(row.kjs_consumed),
+  macrosConsumed: parseMacroSnapshot(row.macros_consumed),
+  kjsTarget: toNumber(row.kjs_target),
+  macrosTarget: parseMacroSnapshot(row.macros_target),
+  kjsBurned: toNumber(row.kjs_burned),
+  kjsBurnedTarget: toNumber(row.kjs_burned_target),
+});
+
+const mapRowToUserExerciseLog = (
+  row: UserExerciseLogRow,
+): UserExerciseLog => ({
+  userId: row.user_id,
+  date: toDateString(row.date),
+  exerciseName: row.exercise_name,
+  setsCompleted: toNumber(row.sets_completed),
+  repsCompleted: toNumber(row.reps_completed),
+  weightUsed: toNumber(row.weight_used),
+  volume: toNumber(row.volume),
+});
+
 const mapRowToShoppingList = (row: UserShoppingListRow): ShoppingList => {
   const shoppingList = parseJsonValue<ShoppingList | null>(row.shopping_list, null);
   const checkedItems = toStringArray(row.checked_items);
@@ -834,110 +908,191 @@ export class MySqlRepositoryUser implements RepositoryUser {
     return rows[0] ?? null;
   }
 
-  private async resetUserTrackingIfNeeded(userId: string): Promise<void> {
-    const activeTrackingDate = resolveActiveTrackingDate();
-    const [rows] = await this.pool.execute<UserTrackingRow[]>(
-      `
-        SELECT
-          user_id,
-          tracked_on,
-          target_kilojoules,
-          protein_grams,
-          carbs_grams,
-          fats_grams,
-          daily_calories_burned,
-          daily_kilojoules_consumed,
-          daily_kilojoules_burned
-        FROM user_tracking
-        WHERE user_id = ?
-        LIMIT 1
-      `,
-      [userId],
-    );
+  async saveUserTrackingEntry(entry: UserTrackingEntry): Promise<UserTrackingEntry> {
+    assertUserTrackingEntry(entry);
 
-    if (rows.length === 0) {
-      return;
+    try {
+      await this.pool.execute<ResultSetHeader>(
+        `
+          INSERT INTO user_tracking (
+            user_id,
+            date,
+            kjs_consumed,
+            macros_consumed,
+            kjs_target,
+            macros_target,
+            kjs_burned,
+            kjs_burned_target
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+            kjs_consumed = VALUES(kjs_consumed),
+            macros_consumed = VALUES(macros_consumed),
+            kjs_target = VALUES(kjs_target),
+            macros_target = VALUES(macros_target),
+            kjs_burned = VALUES(kjs_burned),
+            kjs_burned_target = VALUES(kjs_burned_target)
+        `,
+        [
+          entry.userId,
+          entry.date,
+          Math.round(entry.kjsConsumed),
+          JSON.stringify(entry.macrosConsumed),
+          Math.round(entry.kjsTarget),
+          JSON.stringify(entry.macrosTarget),
+          Math.round(entry.kjsBurned),
+          Math.round(entry.kjsBurnedTarget),
+        ],
+      );
+
+      return entry;
+    } catch (error) {
+      return handleRepositoryError(error);
     }
-
-    const trackedOn = toDateString(rows[0].tracked_on);
-
-    if (trackedOn === activeTrackingDate) {
-      return;
-    }
-
-    await this.pool.execute<ResultSetHeader>(
-      `
-        DELETE FROM user_tracking
-        WHERE user_id = ?
-      `,
-      [userId],
-    );
   }
 
-  private async syncTrackingSummaries(progressDay: UserProgressDay): Promise<void> {
-    await this.pool.execute<ResultSetHeader>(
-      `
-        INSERT INTO user_tracking_history (
-          user_id,
-          tracked_on,
-          kilojoules_consumed,
-          kilojoules_burned
-        )
-        VALUES (?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE
-          kilojoules_consumed = VALUES(kilojoules_consumed),
-          kilojoules_burned = VALUES(kilojoules_burned)
-      `,
-      [
-        progressDay.userId,
-        progressDay.date,
-        progressDay.totals.kilojoulesConsumed,
-        progressDay.totals.kilojoulesBurned,
-      ],
-    );
+  async listUserTrackingEntries(
+    userId: string,
+    startDate: string,
+    endDate: string,
+  ): Promise<UserTrackingEntry[]> {
+    assertNonEmptyString(userId, "userId");
+    assertNonEmptyString(startDate, "startDate");
+    assertNonEmptyString(endDate, "endDate");
 
-    const activeTrackingDate = resolveActiveTrackingDate();
+    try {
+      const [rows] = await this.pool.execute<UserTrackingRow[]>(
+        `
+          SELECT
+            user_id,
+            date,
+            kjs_consumed,
+            macros_consumed,
+            kjs_target,
+            macros_target,
+            kjs_burned,
+            kjs_burned_target
+          FROM user_tracking
+          WHERE user_id = ?
+            AND date >= ?
+            AND date <= ?
+          ORDER BY date ASC
+        `,
+        [userId, startDate, endDate],
+      );
 
-    if (progressDay.date !== activeTrackingDate) {
-      return;
+      return rows.map(mapRowToUserTrackingEntry);
+    } catch (error) {
+      return handleRepositoryError(error);
+    }
+  }
+
+  async replaceUserExerciseLogs(
+    userId: string,
+    date: string,
+    logs: UserExerciseLogInput[],
+  ): Promise<UserExerciseLog[]> {
+    assertNonEmptyString(userId, "userId");
+    assertNonEmptyString(date, "date");
+
+    for (const log of logs) {
+      assertUserExerciseLogInput(log);
     }
 
-    await this.pool.execute<ResultSetHeader>(
-      `
-        INSERT INTO user_tracking (
-          user_id,
-          tracked_on,
-          target_kilojoules,
-          protein_grams,
-          carbs_grams,
-          fats_grams,
-          daily_calories_burned,
-          daily_kilojoules_consumed,
-          daily_kilojoules_burned
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE
-          tracked_on = VALUES(tracked_on),
-          target_kilojoules = VALUES(target_kilojoules),
-          protein_grams = VALUES(protein_grams),
-          carbs_grams = VALUES(carbs_grams),
-          fats_grams = VALUES(fats_grams),
-          daily_calories_burned = VALUES(daily_calories_burned),
-          daily_kilojoules_consumed = VALUES(daily_kilojoules_consumed),
-          daily_kilojoules_burned = VALUES(daily_kilojoules_burned)
-      `,
-      [
-        progressDay.userId,
-        progressDay.date,
-        progressDay.targets.kilojoules,
-        progressDay.macroTotals.proteinGrams,
-        progressDay.macroTotals.carbsGrams,
-        progressDay.macroTotals.fatsGrams,
-        progressDay.totals.caloriesBurned,
-        progressDay.totals.kilojoulesConsumed,
-        progressDay.totals.kilojoulesBurned,
-      ],
-    );
+    const normalizedLogs = logs.map<UserExerciseLog>((log) => ({
+      userId,
+      date,
+      exerciseName: log.exerciseName,
+      setsCompleted: Math.round(log.setsCompleted),
+      repsCompleted: Math.round(log.repsCompleted),
+      weightUsed: Math.round(log.weightUsed * 100) / 100,
+      volume: resolveExerciseVolume(log),
+    }));
+
+    const connection = await this.pool.getConnection();
+
+    try {
+      await connection.beginTransaction();
+      await this.ensureUserExists(connection, userId);
+
+      await connection.execute<ResultSetHeader>(
+        `
+          DELETE FROM user_exercise_logs
+          WHERE user_id = ?
+            AND date = ?
+        `,
+        [userId, date],
+      );
+
+      for (const log of normalizedLogs) {
+        await connection.execute<ResultSetHeader>(
+          `
+            INSERT INTO user_exercise_logs (
+              user_id,
+              date,
+              exercise_name,
+              sets_completed,
+              reps_completed,
+              weight_used,
+              volume
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `,
+          [
+            log.userId,
+            log.date,
+            log.exerciseName,
+            log.setsCompleted,
+            log.repsCompleted,
+            log.weightUsed,
+            log.volume,
+          ],
+        );
+      }
+
+      await connection.commit();
+      return normalizedLogs;
+    } catch (error) {
+      await connection.rollback();
+      return handleRepositoryError(error);
+    } finally {
+      connection.release();
+    }
+  }
+
+  async listUserExerciseLogs(
+    userId: string,
+    startDate: string,
+    endDate: string,
+  ): Promise<UserExerciseLog[]> {
+    assertNonEmptyString(userId, "userId");
+    assertNonEmptyString(startDate, "startDate");
+    assertNonEmptyString(endDate, "endDate");
+
+    try {
+      const [rows] = await this.pool.execute<UserExerciseLogRow[]>(
+        `
+          SELECT
+            user_id,
+            date,
+            exercise_name,
+            sets_completed,
+            reps_completed,
+            weight_used,
+            volume
+          FROM user_exercise_logs
+          WHERE user_id = ?
+            AND date >= ?
+            AND date <= ?
+          ORDER BY date ASC, exercise_name ASC
+        `,
+        [userId, startDate, endDate],
+      );
+
+      return rows.map(mapRowToUserExerciseLog);
+    } catch (error) {
+      return handleRepositoryError(error);
+    }
   }
 
   async addNewUser(user: CreateUserRecordCommand): Promise<void> {
@@ -1603,7 +1758,6 @@ export class MySqlRepositoryUser implements RepositoryUser {
     assertUserProgressDay(progressDay);
 
     try {
-      await this.resetUserTrackingIfNeeded(progressDay.userId);
       await this.pool.execute<ResultSetHeader>(
         `
           INSERT INTO user_progress_tracking (
@@ -1726,8 +1880,6 @@ export class MySqlRepositoryUser implements RepositoryUser {
         ],
       );
 
-      await this.syncTrackingSummaries(progressDay);
-
       return progressDay;
     } catch (error) {
       return handleRepositoryError(error);
@@ -1819,7 +1971,6 @@ export class MySqlRepositoryUser implements RepositoryUser {
     assertNonEmptyString(date, "date");
 
     try {
-      await this.resetUserTrackingIfNeeded(userId);
       const [rows] = await this.pool.execute<UserProgressTrackingRow[]>(
         `
           SELECT
@@ -1884,7 +2035,6 @@ export class MySqlRepositoryUser implements RepositoryUser {
     assertNonEmptyString(endDate, "endDate");
 
     try {
-      await this.resetUserTrackingIfNeeded(userId);
       const [rows] = await this.pool.execute<UserProgressTrackingRow[]>(
         `
           SELECT

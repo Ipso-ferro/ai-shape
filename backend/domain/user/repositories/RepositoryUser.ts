@@ -9,6 +9,9 @@ import {
   PlanSelectionOptions,
   SaveDietPlanOptions,
   ShoppingList,
+  UserExerciseLog,
+  UserTrackingEntry,
+  UserExerciseLogInput,
   WorkoutPlan,
   DietType,
   PlanWeek,
@@ -62,6 +65,22 @@ export interface RepositoryUser {
     startDate: string,
     endDate: string,
   ): Promise<UserProgressDay[]>;
+  saveUserTrackingEntry(entry: UserTrackingEntry): Promise<UserTrackingEntry>;
+  listUserTrackingEntries(
+    userId: string,
+    startDate: string,
+    endDate: string,
+  ): Promise<UserTrackingEntry[]>;
+  replaceUserExerciseLogs(
+    userId: string,
+    date: string,
+    logs: UserExerciseLogInput[],
+  ): Promise<UserExerciseLog[]>;
+  listUserExerciseLogs(
+    userId: string,
+    startDate: string,
+    endDate: string,
+  ): Promise<UserExerciseLog[]>;
   getUserCredentialsByEmail(
     query: GetUserCredentialsByEmailQuery,
   ): Promise<UserCredentials | null>;

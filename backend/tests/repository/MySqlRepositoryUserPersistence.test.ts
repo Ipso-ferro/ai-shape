@@ -5,7 +5,13 @@ import { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { MySqlRepositoryUser } from "../../domain/user/repositories/MySqlRepositoryUser";
 import { mysqlPool } from "../../server/pool";
 import { initializeDatabaseSchema } from "../../server/initializers/DatabaseSchemaInitializing";
-import { DietPlan, ShoppingList, WorkoutPlan } from "../../src/types";
+import {
+  DietPlan,
+  ShoppingList,
+  UserExerciseLogInput,
+  UserTrackingEntry,
+  WorkoutPlan,
+} from "../../src/types";
 
 interface CountRow extends RowDataPacket {
   count: number;
@@ -28,6 +34,24 @@ interface BooleanStateRow extends RowDataPacket {
 
 interface ProgressTrackingStateRow extends RowDataPacket {
   id: string | null;
+}
+
+interface TrackingStateRow extends RowDataPacket {
+  date: string;
+  kjs_consumed: number;
+  macros_consumed: string | Record<string, unknown>;
+  kjs_target: number;
+  macros_target: string | Record<string, unknown>;
+  kjs_burned: number;
+  kjs_burned_target: number;
+}
+
+interface ExerciseLogStateRow extends RowDataPacket {
+  exercise_name: string;
+  sets_completed: number;
+  reps_completed: number;
+  weight_used: string | number;
+  volume: string | number;
 }
 
 const repository = new MySqlRepositoryUser(mysqlPool);
@@ -398,6 +422,34 @@ const getProgressTrackingRowState = async (
   return rows[0] ?? null;
 };
 
+const getTrackingRowState = async (
+  userId: string,
+  date: string,
+): Promise<TrackingStateRow | null> => {
+  const [rows] = await mysqlPool.execute<TrackingStateRow[]>(
+    "SELECT date, kjs_consumed, macros_consumed, kjs_target, macros_target, kjs_burned, kjs_burned_target FROM user_tracking WHERE user_id = ? AND date = ? LIMIT 1",
+    [userId, date],
+  );
+
+  return rows[0] ?? null;
+};
+
+const getExerciseLogRows = async (
+  userId: string,
+  date: string,
+): Promise<ExerciseLogStateRow[]> => {
+  const [rows] = await mysqlPool.execute<ExerciseLogStateRow[]>(
+    "SELECT exercise_name, sets_completed, reps_completed, weight_used, volume FROM user_exercise_logs WHERE user_id = ? AND date = ? ORDER BY exercise_name ASC",
+    [userId, date],
+  );
+
+  return rows;
+};
+
+const parseJsonColumn = (value: string | Record<string, unknown>): Record<string, unknown> => (
+  typeof value === "string" ? JSON.parse(value) : value
+);
+
 const buildShoppingList = (label: string): ShoppingList => ({
   metadata: {
     totalItems: 3,
@@ -738,6 +790,112 @@ test("progress tracking rows persist ids", async (t) => {
 
   const trackedRow = await getProgressTrackingRowState(userId, "2026-03-02");
   assert.ok(trackedRow?.id);
+});
+
+test("daily tracking entries and exercise logs persist, update, and clear", async (t) => {
+  const userId = randomUUID();
+  t.after(async () => {
+    await mysqlPool.execute<ResultSetHeader>("DELETE FROM users WHERE id = ?", [userId]);
+  });
+
+  await createUser(userId);
+
+  const initialTrackingEntry: UserTrackingEntry = {
+    userId,
+    date: "2026-03-02",
+    kjsConsumed: 1590,
+    macrosConsumed: {
+      proteinGrams: 30,
+      carbsGrams: 35,
+      fatsGrams: 12,
+    },
+    kjsTarget: 8452,
+    macrosTarget: {
+      proteinGrams: 165,
+      carbsGrams: 175,
+      fatsGrams: 60,
+    },
+    kjsBurned: 0,
+    kjsBurnedTarget: 1464,
+  };
+
+  await repository.saveUserTrackingEntry(initialTrackingEntry);
+  await repository.saveUserTrackingEntry({
+    ...initialTrackingEntry,
+    kjsConsumed: 2469,
+    macrosConsumed: {
+      proteinGrams: 50,
+      carbsGrams: 57,
+      fatsGrams: 16,
+    },
+    kjsBurned: 1464,
+  });
+
+  const exerciseLogs: UserExerciseLogInput[] = [
+    {
+      exerciseName: "Goblet Squat",
+      setsCompleted: 3,
+      repsCompleted: 10,
+      weightUsed: 24.5,
+    },
+    {
+      exerciseName: "Push Press",
+      setsCompleted: 4,
+      repsCompleted: 8,
+      weightUsed: 32.5,
+    },
+  ];
+
+  await repository.replaceUserExerciseLogs(userId, "2026-03-02", exerciseLogs);
+
+  const trackingRow = await getTrackingRowState(userId, "2026-03-02");
+  assert.equal(trackingRow?.kjs_consumed, 2469);
+  assert.equal(trackingRow?.kjs_target, 8452);
+  assert.deepEqual(parseJsonColumn(trackingRow?.macros_consumed ?? "{}"), {
+    proteinGrams: 50,
+    carbsGrams: 57,
+    fatsGrams: 16,
+  });
+  assert.deepEqual(parseJsonColumn(trackingRow?.macros_target ?? "{}"), {
+    proteinGrams: 165,
+    carbsGrams: 175,
+    fatsGrams: 60,
+  });
+  assert.equal(trackingRow?.kjs_burned, 1464);
+  assert.equal(trackingRow?.kjs_burned_target, 1464);
+
+  const storedTrackingEntries = await repository.listUserTrackingEntries(
+    userId,
+    "2026-03-01",
+    "2026-03-07",
+  );
+  assert.equal(storedTrackingEntries.length, 1);
+  assert.equal(storedTrackingEntries[0].kjsConsumed, 2469);
+  assert.deepEqual(storedTrackingEntries[0].macrosConsumed, {
+    proteinGrams: 50,
+    carbsGrams: 57,
+    fatsGrams: 16,
+  });
+
+  const exerciseLogRows = await getExerciseLogRows(userId, "2026-03-02");
+  assert.equal(exerciseLogRows.length, 2);
+  assert.equal(exerciseLogRows[0].exercise_name, "Goblet Squat");
+  assert.equal(Number(exerciseLogRows[0].weight_used), 24.5);
+  assert.equal(Number(exerciseLogRows[0].volume), 735);
+  assert.equal(Number(exerciseLogRows[1].volume), 1040);
+
+  const storedExerciseLogs = await repository.listUserExerciseLogs(
+    userId,
+    "2026-03-01",
+    "2026-03-07",
+  );
+  assert.equal(storedExerciseLogs.length, 2);
+  assert.equal(storedExerciseLogs[1].exerciseName, "Push Press");
+  assert.equal(storedExerciseLogs[1].volume, 1040);
+
+  await repository.replaceUserExerciseLogs(userId, "2026-03-02", []);
+  const clearedExerciseLogRows = await getExerciseLogRows(userId, "2026-03-02");
+  assert.equal(clearedExerciseLogRows.length, 0);
 });
 
 test("shopping lists persist independently by diet type and week", async (t) => {

@@ -27,7 +27,10 @@ import {
   SaveDietPlanOptions,
   ShoppingList,
   TrackableMealSlot,
+  UserExerciseLog,
+  UserExerciseLogInput,
   UserProgressDay,
+  UserTrackingEntry,
   WorkoutPlan,
 } from "../../src/types";
 
@@ -36,6 +39,8 @@ class RepositoryUserMock implements RepositoryUser {
   private workoutPlan: WorkoutPlan | null = null;
   private readonly shoppingLists = new Map<string, ShoppingList>();
   private readonly progressDays = new Map<string, UserProgressDay>();
+  private readonly trackingEntries = new Map<string, UserTrackingEntry>();
+  private readonly exerciseLogs = new Map<string, UserExerciseLog[]>();
   private readonly dietMealEatenStates = new Map<string, boolean>();
   private readonly workoutDayCompletionStates = new Map<string, boolean>();
   private readonly usersById = new Map<string, DataUserCommand>();
@@ -350,6 +355,69 @@ class RepositoryUserMock implements RepositoryUser {
         && progressDay.date <= endDate
       ))
       .sort((left, right) => left.date.localeCompare(right.date));
+  }
+
+  async saveUserTrackingEntry(entry: UserTrackingEntry): Promise<UserTrackingEntry> {
+    this.trackingEntries.set(`${entry.userId}:${entry.date}`, entry);
+    return entry;
+  }
+
+  async listUserTrackingEntries(
+    userId: string,
+    startDate: string,
+    endDate: string,
+  ): Promise<UserTrackingEntry[]> {
+    return Array.from(this.trackingEntries.values())
+      .filter((entry) => (
+        entry.userId === userId
+        && entry.date >= startDate
+        && entry.date <= endDate
+      ))
+      .sort((left, right) => left.date.localeCompare(right.date));
+  }
+
+  async replaceUserExerciseLogs(
+    userId: string,
+    date: string,
+    logs: UserExerciseLogInput[],
+  ): Promise<UserExerciseLog[]> {
+    const key = `${userId}:${date}`;
+    const normalized = logs.map((log) => ({
+      userId,
+      date,
+      exerciseName: log.exerciseName,
+      setsCompleted: Math.round(log.setsCompleted),
+      repsCompleted: Math.round(log.repsCompleted),
+      weightUsed: Math.round(log.weightUsed * 100) / 100,
+      volume: Math.round(log.setsCompleted * log.repsCompleted * log.weightUsed * 100) / 100,
+    }));
+
+    if (normalized.length === 0) {
+      this.exerciseLogs.delete(key);
+      return [];
+    }
+
+    this.exerciseLogs.set(key, normalized);
+    return normalized;
+  }
+
+  async listUserExerciseLogs(
+    userId: string,
+    startDate: string,
+    endDate: string,
+  ): Promise<UserExerciseLog[]> {
+    return Array.from(this.exerciseLogs.values())
+      .flat()
+      .filter((entry) => (
+        entry.userId === userId
+        && entry.date >= startDate
+        && entry.date <= endDate
+      ))
+      .sort((left, right) => (
+        left.date === right.date
+          ? left.exerciseName.localeCompare(right.exerciseName)
+          : left.date.localeCompare(right.date)
+      ));
   }
 
   async getUserCredentialsByEmail(
@@ -927,6 +995,129 @@ test("PUT /progress/users/:id/meals/:mealSlot and /workout track daily energy to
     assert.equal(summaryPayload.totals.caloriesBurned, 350);
     assert.equal(summaryPayload.breakdown.length, 1);
     assert.equal(summaryPayload.breakdown[0].label, "2026-03-02");
+  });
+});
+
+test("GET /progress/users/:id/tracking and /exercise-logs return the persisted daily tracking tables", async () => {
+  await withRunningServer(async (baseUrl) => {
+    const requestHeaders = createAuthHeaders({
+      "Content-Type": "application/json",
+    });
+
+    const mealResponse = await fetch(
+      `${baseUrl}/progress/users/${sampleUser.id}/meals/breakfast`,
+      {
+        method: "PUT",
+        headers: requestHeaders,
+        body: JSON.stringify({
+          date: "2026-03-02",
+          completed: true,
+        }),
+      },
+    );
+    assert.equal(mealResponse.status, 200);
+
+    const workoutResponse = await fetch(`${baseUrl}/progress/users/${sampleUser.id}/workout`, {
+      method: "PUT",
+      headers: requestHeaders,
+      body: JSON.stringify({
+        date: "2026-03-02",
+        completed: true,
+        exerciseLogs: [
+          {
+            exerciseName: "Goblet Squat",
+            setsCompleted: 3,
+            repsCompleted: 10,
+            weightUsed: 24.5,
+          },
+        ],
+      }),
+    });
+    assert.equal(workoutResponse.status, 200);
+
+    const trackingResponse = await fetch(
+      `${baseUrl}/progress/users/${sampleUser.id}/tracking?startDate=2026-03-02&endDate=2026-03-02`,
+      {
+        headers: createAuthHeaders(),
+      },
+    );
+    assert.equal(trackingResponse.status, 200);
+
+    const trackingPayload = await trackingResponse.json();
+    assert.equal(trackingPayload.length, 1);
+    assert.equal(trackingPayload[0].date, "2026-03-02");
+    assert.equal(trackingPayload[0].kjsConsumed, 1590);
+    assert.deepEqual(trackingPayload[0].macrosConsumed, {
+      proteinGrams: 30,
+      carbsGrams: 35,
+      fatsGrams: 12,
+    });
+    assert.equal(trackingPayload[0].kjsTarget, 8452);
+    assert.deepEqual(trackingPayload[0].macrosTarget, {
+      proteinGrams: 165,
+      carbsGrams: 175,
+      fatsGrams: 60,
+    });
+    assert.equal(trackingPayload[0].kjsBurned, 1464);
+    assert.equal(trackingPayload[0].kjsBurnedTarget, 1464);
+
+    const exerciseLogsResponse = await fetch(
+      `${baseUrl}/progress/users/${sampleUser.id}/exercise-logs?startDate=2026-03-02&endDate=2026-03-02`,
+      {
+        headers: createAuthHeaders(),
+      },
+    );
+    assert.equal(exerciseLogsResponse.status, 200);
+
+    const exerciseLogsPayload = await exerciseLogsResponse.json();
+    assert.equal(exerciseLogsPayload.length, 1);
+    assert.equal(exerciseLogsPayload[0].exerciseName, "Goblet Squat");
+    assert.equal(exerciseLogsPayload[0].weightUsed, 24.5);
+    assert.equal(exerciseLogsPayload[0].volume, 735);
+
+    const clearWorkoutResponse = await fetch(`${baseUrl}/progress/users/${sampleUser.id}/workout`, {
+      method: "PUT",
+      headers: requestHeaders,
+      body: JSON.stringify({
+        date: "2026-03-02",
+        completed: false,
+      }),
+    });
+    assert.equal(clearWorkoutResponse.status, 200);
+
+    const clearedExerciseLogsResponse = await fetch(
+      `${baseUrl}/progress/users/${sampleUser.id}/exercise-logs?startDate=2026-03-02&endDate=2026-03-02`,
+      {
+        headers: createAuthHeaders(),
+      },
+    );
+    assert.equal(clearedExerciseLogsResponse.status, 200);
+
+    const clearedExerciseLogsPayload = await clearedExerciseLogsResponse.json();
+    assert.deepEqual(clearedExerciseLogsPayload, []);
+  });
+});
+
+test("PUT /progress/users/:id/meals/:mealSlot blocks future tracking dates", async () => {
+  await withRunningServer(async (baseUrl) => {
+    const futureDate = new Date(Date.now() + (24 * 60 * 60 * 1000)).toISOString().slice(0, 10);
+    const response = await fetch(
+      `${baseUrl}/progress/users/${sampleUser.id}/meals/breakfast`,
+      {
+        method: "PUT",
+        headers: createAuthHeaders({
+          "Content-Type": "application/json",
+        }),
+        body: JSON.stringify({
+          date: futureDate,
+          completed: true,
+        }),
+      },
+    );
+
+    assert.equal(response.status, 400);
+    const payload = await response.json();
+    assert.equal(payload.message, "Future meals and workouts stay locked until that date is active.");
   });
 });
 

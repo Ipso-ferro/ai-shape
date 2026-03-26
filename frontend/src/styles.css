@@ -779,6 +779,27 @@ label > span {
   height: 0.75rem;
   border-radius: 999px;
   display: inline-block;
+  background: var(--legend-color, rgba(34, 34, 34, 0.2));
+}
+
+.chart-legend-item.energy-target::before {
+  --legend-color: rgba(47, 127, 109, 0.28);
+}
+
+.chart-legend-item.energy-consumed::before {
+  --legend-color: #ef7f45;
+}
+
+.chart-legend-item.macro-protein::before {
+  --legend-color: #2f7f6d;
+}
+
+.chart-legend-item.macro-carbs::before {
+  --legend-color: #efb347;
+}
+
+.chart-legend-item.macro-fats::before {
+  --legend-color: #7d5fff;
 }
 
 .chart-legend-item.muscle::before {
@@ -812,6 +833,14 @@ label > span {
   font-size: 0.75rem;
 }
 
+.energy-target-bar {
+  fill: rgba(47, 127, 109, 0.24);
+}
+
+.energy-consumed-bar {
+  fill: #ef7f45;
+}
+
 .body-chart-line {
   fill: none;
   stroke-width: 3;
@@ -833,6 +862,65 @@ label > span {
 
 .composition-stats {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.macro-breakdown-list {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.macro-breakdown-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 200px) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.1rem;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--app-border);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: var(--shadow-xs);
+}
+
+.macro-breakdown-row strong {
+  display: block;
+  color: var(--app-text);
+}
+
+.macro-breakdown-row span {
+  color: var(--app-text-secondary);
+}
+
+.macro-stack {
+  display: flex;
+  min-height: 1rem;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: rgba(25, 55, 43, 0.08);
+}
+
+.macro-segment {
+  display: block;
+  min-width: 0;
+}
+
+.macro-segment.protein {
+  background: #2f7f6d;
+}
+
+.macro-segment.carbs {
+  background: #efb347;
+}
+
+.macro-segment.fats {
+  background: #7d5fff;
+}
+
+.macro-breakdown-values {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  font-size: 0.92rem;
 }
 
 .progress-rail {
@@ -1094,6 +1182,24 @@ label > span {
   box-shadow: var(--shadow-xs);
 }
 
+.exercise-log-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.85rem;
+  margin-top: 1rem;
+}
+
+.exercise-log-field {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.exercise-log-field span {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--app-text-secondary);
+}
+
 .subpanel strong {
   display: block;
   margin-bottom: 0.75rem;
@@ -1286,6 +1392,15 @@ label > span {
   .panel-header-aside {
     width: 100%;
     justify-items: stretch;
+  }
+
+  .macro-breakdown-row,
+  .exercise-log-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .macro-breakdown-values {
+    justify-content: flex-start;
   }
 }
 

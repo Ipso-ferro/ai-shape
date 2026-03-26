@@ -2,20 +2,26 @@ import { NotFoundError, ValidationError } from "../../../share/Errors/AppErrors"
 import { RepositoryUser } from "../../../user/repositories/RepositoryUser";
 import { TrackMealProgressCommand } from "../../command/TrackMealProgressCommand";
 import { TrackWorkoutProgressCommand } from "../../command/TrackWorkoutProgressCommand";
+import { GetUserExerciseLogsQuery } from "../../queries/GetUserExerciseLogsQuery";
 import { GetUserProgressDayQuery } from "../../queries/GetUserProgressDayQuery";
 import { GetUserProgressSummaryQuery } from "../../queries/GetUserProgressSummaryQuery";
+import { GetUserTrackingEntriesQuery } from "../../queries/GetUserTrackingEntriesQuery";
 import {
   DataUserCommand,
   DietPlan,
   DietPlanDay,
   DietPlanEntry,
+  MacroSnapshot,
   TrackableMealSlot,
+  UserExerciseLog,
+  UserExerciseLogInput,
   UserProgressBreakdownItem,
   UserProgressDay,
   UserProgressMealStatus,
   UserProgressPeriod,
   UserProgressSummary,
   UserProgressTotals,
+  UserTrackingEntry,
   WorkoutPlan,
   WorkoutPlanDay,
 } from "../../../../src/types";
@@ -62,6 +68,12 @@ const createEmptyMacroTotals = (): UserProgressDay["macroTotals"] => ({
   fatsGrams: 0,
 });
 
+const cloneMacroTotals = (snapshot: MacroSnapshot): MacroSnapshot => ({
+  proteinGrams: snapshot.proteinGrams,
+  carbsGrams: snapshot.carbsGrams,
+  fatsGrams: snapshot.fatsGrams,
+});
+
 const toCaloriesFromKilojoules = (kilojoules: number): number => (
   Math.round(kilojoules / kilojoulesPerCalorie)
 );
@@ -96,6 +108,18 @@ const normaliseDate = (value: string): string => {
   }
 
   return value;
+};
+
+const assertDateRange = (startDate: string, endDate: string): void => {
+  if (startDate > endDate) {
+    throw new ValidationError("\"startDate\" must be before or equal to \"endDate\".");
+  }
+};
+
+const assertNotFutureDate = (date: string): void => {
+  if (date > new Date().toISOString().slice(0, 10)) {
+    throw new ValidationError("Future meals and workouts stay locked until that date is active.");
+  }
 };
 
 const getPlanDayNumber = (date: string): number => {
@@ -317,6 +341,68 @@ const resolveWorkoutStatus = (
   };
 };
 
+const getDietEntries = (dietDay: DietPlanDay): DietPlanEntry[] => ([
+  dietDay.breakfast,
+  dietDay.snack1,
+  dietDay.lunch,
+  dietDay.dinner,
+  dietDay.snack2,
+  ...dietDay.supplements,
+]);
+
+const resolveDietTargets = (
+  dietDay: DietPlanDay | null,
+): Pick<UserTrackingEntry, "kjsTarget" | "macrosTarget"> => {
+  if (!dietDay) {
+    return {
+      kjsTarget: 0,
+      macrosTarget: createEmptyMacroTotals(),
+    };
+  }
+
+  return getDietEntries(dietDay).reduce<Pick<UserTrackingEntry, "kjsTarget" | "macrosTarget">>(
+    (current, entry) => ({
+      kjsTarget: current.kjsTarget + resolveKilojoules(entry.kilojoules, entry.calories),
+      macrosTarget: {
+        proteinGrams: current.macrosTarget.proteinGrams + parseMacroGrams(entry.macros?.protein),
+        carbsGrams: current.macrosTarget.carbsGrams + parseMacroGrams(entry.macros?.carbs),
+        fatsGrams: current.macrosTarget.fatsGrams + parseMacroGrams(entry.macros?.fats),
+      },
+    }),
+    {
+      kjsTarget: 0,
+      macrosTarget: createEmptyMacroTotals(),
+    },
+  );
+};
+
+const resolveWorkoutTarget = (workoutDay: WorkoutPlanDay | null): number => (
+  workoutDay
+    ? resolveKilojoules(
+      workoutDay.estimatedKilojoulesBurned,
+      workoutDay.estimatedCaloriesBurned,
+    )
+    : 0
+);
+
+const parsePlanCount = (value: string | undefined): number => {
+  if (typeof value !== "string") {
+    return 0;
+  }
+
+  const match = value.match(/\d+/);
+  return match ? Number(match[0]) : 0;
+};
+
+const buildDefaultExerciseLogs = (workoutDay: WorkoutPlanDay): UserExerciseLogInput[] => (
+  workoutDay.exercises.map((exercise) => ({
+    exerciseName: exercise.name,
+    setsCompleted: parsePlanCount(exercise.sets),
+    repsCompleted: parsePlanCount(exercise.reps),
+    weightUsed: 0,
+  }))
+);
+
 const findDietPlanDay = (dietPlan: DietPlan, date: string): DietPlanDay | null => {
   const expectedDayNumber = getPlanDayNumber(date);
   const expectedDayName = getPlanDayName(date).toLowerCase();
@@ -461,6 +547,7 @@ export class UserProgressTrackingService {
 
   async trackMeal(command: TrackMealProgressCommand): Promise<UserProgressDay> {
     const date = normaliseDate(command.date);
+    assertNotFutureDate(date);
     const user = await this.getUser(command.userId);
     const selectedDietType = command.dietType ?? (
       user.kindOfDiet === "single-food" ? "single-food" : "recipes"
@@ -504,12 +591,20 @@ export class UserProgressTrackingService {
       command.completed,
       command.week,
     );
+    await this.syncTrackingEntry({
+      user,
+      date,
+      progressDay: savedDay,
+      dietDay,
+      workoutDay: await this.getWorkoutDay(command.userId, date),
+    });
 
     return savedDay;
   }
 
   async trackWorkout(command: TrackWorkoutProgressCommand): Promise<UserProgressDay> {
     const date = normaliseDate(command.date);
+    assertNotFutureDate(date);
     const user = await this.getUser(command.userId);
     const workoutPlan = await this.repositoryUser.getWorkoutPlan(command.userId);
 
@@ -541,6 +636,20 @@ export class UserProgressTrackingService {
       nextDay.planDayNumber,
       nextDay.workout.completed,
     );
+    await this.repositoryUser.replaceUserExerciseLogs(
+      command.userId,
+      date,
+      command.completed
+        ? this.resolveWorkoutExerciseLogs(command.exerciseLogs, workoutDay)
+        : [],
+    );
+    await this.syncTrackingEntry({
+      user,
+      date,
+      progressDay: savedDay,
+      dietDay: await this.getDietDayForTracking(user, date),
+      workoutDay,
+    });
 
     return savedDay;
   }
@@ -600,6 +709,124 @@ export class UserProgressTrackingService {
       totals,
       breakdown: buildBreakdown(rows, query.period, date),
     };
+  }
+
+  async getTracking(query: GetUserTrackingEntriesQuery): Promise<UserTrackingEntry[]> {
+    const startDate = normaliseDate(query.startDate);
+    const endDate = normaliseDate(query.endDate);
+    assertDateRange(startDate, endDate);
+    await this.getUser(query.userId);
+
+    return this.repositoryUser.listUserTrackingEntries(query.userId, startDate, endDate);
+  }
+
+  async getExerciseLogs(query: GetUserExerciseLogsQuery): Promise<UserExerciseLog[]> {
+    const startDate = normaliseDate(query.startDate);
+    const endDate = normaliseDate(query.endDate);
+    assertDateRange(startDate, endDate);
+    await this.getUser(query.userId);
+
+    return this.repositoryUser.listUserExerciseLogs(query.userId, startDate, endDate);
+  }
+
+  private resolveWorkoutExerciseLogs(
+    exerciseLogs: UserExerciseLogInput[] | undefined,
+    workoutDay: WorkoutPlanDay,
+  ): UserExerciseLogInput[] {
+    const defaults = buildDefaultExerciseLogs(workoutDay);
+
+    if (!exerciseLogs || exerciseLogs.length === 0) {
+      return defaults;
+    }
+
+    const defaultsByExercise = new Map(defaults.map((log) => [log.exerciseName, log]));
+
+    for (const log of exerciseLogs) {
+      if (!defaultsByExercise.has(log.exerciseName)) {
+        throw new ValidationError(`Exercise "${log.exerciseName}" is not part of this workout day.`);
+      }
+
+      if (
+        !Number.isFinite(log.setsCompleted)
+        || !Number.isFinite(log.repsCompleted)
+        || !Number.isFinite(log.weightUsed)
+        || log.setsCompleted < 0
+        || log.repsCompleted < 0
+        || log.weightUsed < 0
+      ) {
+        throw new ValidationError("Exercise log values must be valid non-negative numbers.");
+      }
+    }
+
+    const providedByExercise = new Map(exerciseLogs.map((log) => [log.exerciseName, log]));
+
+    return defaults.map((log) => {
+      const provided = providedByExercise.get(log.exerciseName);
+
+      return provided ? {
+        exerciseName: provided.exerciseName,
+        setsCompleted: Math.round(provided.setsCompleted),
+        repsCompleted: Math.round(provided.repsCompleted),
+        weightUsed: Math.round(provided.weightUsed * 100) / 100,
+      } : log;
+    });
+  }
+
+  private async getDietDayForTracking(
+    user: DataUserCommand,
+    date: string,
+    options?: {
+      dietType?: "single-food" | "recipes";
+      week?: "current" | "next";
+    },
+  ): Promise<DietPlanDay | null> {
+    const dietType = options?.dietType ?? (
+      user.kindOfDiet === "single-food" ? "single-food" : "recipes"
+    );
+    const dietPlan = await this.repositoryUser.getDietPlan(user.id, {
+      dietType,
+      week: options?.week ?? "current",
+    });
+
+    if (!dietPlan) {
+      return null;
+    }
+
+    return findDietPlanDay(dietPlan, date);
+  }
+
+  private async getWorkoutDay(
+    userId: string,
+    date: string,
+  ): Promise<WorkoutPlanDay | null> {
+    const workoutPlan = await this.repositoryUser.getWorkoutPlan(userId);
+
+    if (!workoutPlan) {
+      return null;
+    }
+
+    return findWorkoutPlanDay(workoutPlan, date);
+  }
+
+  private async syncTrackingEntry(args: {
+    user: DataUserCommand;
+    date: string;
+    progressDay: UserProgressDay;
+    dietDay: DietPlanDay | null;
+    workoutDay: WorkoutPlanDay | null;
+  }): Promise<void> {
+    const dietTargets = resolveDietTargets(args.dietDay);
+
+    await this.repositoryUser.saveUserTrackingEntry({
+      userId: args.user.id,
+      date: args.date,
+      kjsConsumed: args.progressDay.totals.kilojoulesConsumed,
+      macrosConsumed: cloneMacroTotals(args.progressDay.macroTotals),
+      kjsTarget: dietTargets.kjsTarget,
+      macrosTarget: cloneMacroTotals(dietTargets.macrosTarget),
+      kjsBurned: args.progressDay.totals.kilojoulesBurned,
+      kjsBurnedTarget: resolveWorkoutTarget(args.workoutDay),
+    });
   }
 
   private async getUser(userId: string): Promise<DataUserCommand> {

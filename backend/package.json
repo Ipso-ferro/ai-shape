@@ -4,8 +4,8 @@
   "main": "index.js",
   "scripts": {
     "test": "npm run build && node --test build/tests/**/*.test.js",
-    "server": "node -r dotenv/config build/server/server.js",
-    "start": "node -r dotenv/config build/server/server.js",
+    "server": "npm run build && node -r dotenv/config build/server/server.js",
+    "start": "npm run build && node -r dotenv/config build/server/server.js",
     "build": "rm -rf build && npx tsc"
   },
   "keywords": [],

@@ -2,6 +2,7 @@ import { NextFunction, Request, Response } from "express";
 import { ProgressHandler } from "../../domain/progress/handlers/ProgressHandler";
 import { ValidationError } from "../../domain/share/Errors/AppErrors";
 import {
+  ProgressRangeRequestQuery,
   ProgressDayRequestQuery,
   ProgressMealRouteParams,
   ProgressRouteParams,
@@ -62,6 +63,40 @@ export class ProgressController {
     }
   };
 
+  getTracking = async (
+    req: Request<ProgressRouteParams, unknown, unknown, ProgressRangeRequestQuery>,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> => {
+    try {
+      const result = await this.progressHandler.getTracking({
+        userId: req.params.id,
+        startDate: req.query.startDate ?? getDefaultDate(),
+        endDate: req.query.endDate ?? req.query.startDate ?? getDefaultDate(),
+      });
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getExerciseLogs = async (
+    req: Request<ProgressRouteParams, unknown, unknown, ProgressRangeRequestQuery>,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> => {
+    try {
+      const result = await this.progressHandler.getExerciseLogs({
+        userId: req.params.id,
+        startDate: req.query.startDate ?? getDefaultDate(),
+        endDate: req.query.endDate ?? req.query.startDate ?? getDefaultDate(),
+      });
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   trackMeal = async (
     req: Request<ProgressMealRouteParams, unknown, TrackProgressRequestBody>,
     res: Response,
@@ -100,6 +135,7 @@ export class ProgressController {
         userId: req.params.id,
         date: req.body?.date ?? getDefaultDate(),
         completed: resolveCompleted(req.body?.completed),
+        exerciseLogs: req.body?.exerciseLogs,
       });
       res.status(200).json(result);
     } catch (error) {

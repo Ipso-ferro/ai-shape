@@ -155,6 +155,12 @@ export interface UserProgressWorkoutStatus {
   kilojoulesBurned: number;
 }
 
+export interface MacroSnapshot {
+  proteinGrams: number;
+  carbsGrams: number;
+  fatsGrams: number;
+}
+
 export interface UserProgressTotals {
   caloriesConsumed: number;
   kilojoulesConsumed: number;
@@ -211,6 +217,30 @@ export interface UserProgressSummary {
     trackedDays: number;
   };
   breakdown: UserProgressBreakdownItem[];
+}
+
+export interface UserTrackingEntry {
+  userId: string;
+  date: string;
+  kjsConsumed: number;
+  macrosConsumed: MacroSnapshot;
+  kjsTarget: number;
+  macrosTarget: MacroSnapshot;
+  kjsBurned: number;
+  kjsBurnedTarget: number;
+}
+
+export interface UserExerciseLogInput {
+  exerciseName: string;
+  setsCompleted: number;
+  repsCompleted: number;
+  weightUsed: number;
+}
+
+export interface UserExerciseLog extends UserExerciseLogInput {
+  userId: string;
+  date: string;
+  volume: number;
 }
 
 export interface ShoppingItem {

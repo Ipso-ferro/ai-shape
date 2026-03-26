@@ -106,21 +106,38 @@ const createUserProgressTrackingTableStatement = `
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 `;
 
-const createUserTrackingTableStatement = `
-  CREATE TABLE IF NOT EXISTS user_tracking (
+const createUserTrackingTableStatement = (tableName = "user_tracking"): string => `
+  CREATE TABLE IF NOT EXISTS ${tableName} (
     user_id CHAR(36) NOT NULL,
-    tracked_on DATE NOT NULL,
-    target_kilojoules INT UNSIGNED NOT NULL DEFAULT 0,
-    protein_grams INT UNSIGNED NOT NULL DEFAULT 0,
-    carbs_grams INT UNSIGNED NOT NULL DEFAULT 0,
-    fats_grams INT UNSIGNED NOT NULL DEFAULT 0,
-    daily_calories_burned INT UNSIGNED NOT NULL DEFAULT 0,
-    daily_kilojoules_consumed INT UNSIGNED NOT NULL DEFAULT 0,
-    daily_kilojoules_burned INT UNSIGNED NOT NULL DEFAULT 0,
+    date DATE NOT NULL,
+    kjs_consumed INT UNSIGNED NOT NULL DEFAULT 0,
+    macros_consumed JSON NOT NULL,
+    kjs_target INT UNSIGNED NOT NULL DEFAULT 0,
+    macros_target JSON NOT NULL,
+    kjs_burned INT UNSIGNED NOT NULL DEFAULT 0,
+    kjs_burned_target INT UNSIGNED NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (user_id),
-    CONSTRAINT fk_user_tracking_user
+    PRIMARY KEY (user_id, date),
+    CONSTRAINT fk_${tableName}_user
+      FOREIGN KEY (user_id) REFERENCES users(id)
+      ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+`;
+
+const createUserExerciseLogsTableStatement = `
+  CREATE TABLE IF NOT EXISTS user_exercise_logs (
+    user_id CHAR(36) NOT NULL,
+    date DATE NOT NULL,
+    exercise_name VARCHAR(255) NOT NULL,
+    sets_completed INT UNSIGNED NOT NULL DEFAULT 0,
+    reps_completed INT UNSIGNED NOT NULL DEFAULT 0,
+    weight_used DECIMAL(10,2) NOT NULL DEFAULT 0,
+    volume DECIMAL(12,2) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, date, exercise_name),
+    CONSTRAINT fk_user_exercise_logs_user
       FOREIGN KEY (user_id) REFERENCES users(id)
       ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -759,6 +776,55 @@ const migrateLegacyWorkoutDays = async (pool: Pool): Promise<void> => {
   await pool.query("RENAME TABLE user_workout_plan_days_tmp TO user_workout_plan_days");
 };
 
+const migrateUserTrackingTable = async (pool: Pool): Promise<void> => {
+  if (!await tableExists(pool, "user_tracking")) {
+    return;
+  }
+
+  if (await columnExists(pool, "user_tracking", "kjs_consumed")) {
+    return;
+  }
+
+  await pool.query("DROP TABLE IF EXISTS user_tracking_tmp");
+  await pool.query(createUserTrackingTableStatement("user_tracking_tmp"));
+
+  await pool.query(
+    `
+      INSERT INTO user_tracking_tmp (
+        user_id,
+        date,
+        kjs_consumed,
+        macros_consumed,
+        kjs_target,
+        macros_target,
+        kjs_burned,
+        kjs_burned_target
+      )
+      SELECT
+        user_id,
+        tracked_on,
+        daily_kilojoules_consumed,
+        JSON_OBJECT(
+          'proteinGrams', COALESCE(protein_grams, 0),
+          'carbsGrams', COALESCE(carbs_grams, 0),
+          'fatsGrams', COALESCE(fats_grams, 0)
+        ),
+        target_kilojoules,
+        JSON_OBJECT(
+          'proteinGrams', 0,
+          'carbsGrams', 0,
+          'fatsGrams', 0
+        ),
+        daily_kilojoules_burned,
+        0
+      FROM user_tracking
+    `,
+  );
+
+  await pool.query("DROP TABLE user_tracking");
+  await pool.query("RENAME TABLE user_tracking_tmp TO user_tracking");
+};
+
 const dropLegacyHeaderTables = async (pool: Pool): Promise<void> => {
   if (await tableExists(pool, "user_diet_plans")) {
     await pool.query("DROP TABLE user_diet_plans");
@@ -924,11 +990,13 @@ export const initializeDatabaseSchema = async (
   await migrateLegacyPlanSummaries(pool);
   await migrateLegacyDietDays(pool);
   await migrateLegacyWorkoutDays(pool);
+  await migrateUserTrackingTable(pool);
   await ensureWorkoutDayMetricColumns(pool);
   await dropLegacyHeaderTables(pool);
   await pool.query(createUserProgressTrackingTableStatement);
-  await pool.query(createUserTrackingTableStatement);
+  await pool.query(createUserTrackingTableStatement());
   await pool.query(createUserTrackingHistoryTableStatement);
+  await pool.query(createUserExerciseLogsTableStatement);
   await migrateLegacyShoppingLists(pool);
   await ensurePlanRowStateColumns(pool);
 };
