@@ -2,10 +2,13 @@
   "name": "ai-shape",
   "private": true,
   "scripts": {
-    "dev": "cd frontend && npm run dev",
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
     "dev:frontend": "cd frontend && npm run dev",
-    "dev:backend": "cd backend && npm run server",
+    "dev:backend": "cd backend && npm run build && npm run server",
     "build": "cd frontend && npm run build && cd ../backend && npm run build",
     "test": "cd backend && npm run test"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
   }
 }

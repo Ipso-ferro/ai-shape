@@ -1,5 +1,7 @@
 .DS_Store
 
+node_modules/
+
 backend/.env
 backend/node_modules/
 backend/.npm-cache/
@@ -9,6 +11,7 @@ frontend/.env
 frontend/node_modules/
 frontend/dist/
 frontend/.npm-cache/
+frontend/.vite-cache/
 frontend/*.tsbuildinfo
 frontend/vite.config.js
 frontend/vite.config.d.ts

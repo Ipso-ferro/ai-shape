@@ -1,28 +1,26 @@
+import { NotFoundError } from "../../share/Errors/AppErrors";
 import { RepositoryUser } from "../../user/repositories/RepositoryUser";
-
-type DietType = "recipes" | "single-food";
-type PlanWeek = "current" | "next";
-
-interface ShoppingListOptions {
-  dietType?: DietType;
-  week?: PlanWeek;
-}
+import { PlanSelectionOptions, ShoppingList } from "../../../src/types";
 
 export class ShoppingListHandler {
   constructor(private readonly repositoryUser: RepositoryUser) {}
 
-  async getList(userId: string, _options?: ShoppingListOptions): Promise<unknown> {
-    const user = await this.repositoryUser.getDataUser({ id: userId });
-    return user;
+  async getList(userId: string, options?: PlanSelectionOptions): Promise<ShoppingList> {
+    const shoppingList = await this.repositoryUser.getShoppingList(userId, options);
+
+    if (!shoppingList) {
+      throw new NotFoundError(`Shopping list for user "${userId}" was not found.`);
+    }
+
+    return shoppingList;
   }
 
-  async toggleItem(
+  toggleItem(
     userId: string,
-    _itemId: string,
-    _checked: boolean,
-    _options?: ShoppingListOptions,
-  ): Promise<unknown> {
-    const user = await this.repositoryUser.getDataUser({ id: userId });
-    return user;
+    itemId: string,
+    checked: boolean,
+    options?: PlanSelectionOptions,
+  ): Promise<ShoppingList> {
+    return this.repositoryUser.toggleShoppingListItem(userId, itemId, checked, options);
   }
 }

@@ -9,6 +9,7 @@ import {
   calculateDietContext,
   ensureDietPlanDayMatchesMealCount,
   ensureDietPlanMatchesMealCount,
+  requiresSupplementSlotForMealCount,
   validateDietPlanDay,
 } from "./dietPlanGenerationShared";
 import { createOpenAIClient, MODEL, DIET_PLAN_MAX_TOKENS } from "./client";
@@ -31,6 +32,7 @@ const singleFoodDayNames = [
 ];
 
 const missingSingleFoodSupplementError = "Required supplements were omitted from the single-food diet plan.";
+const missingSixthMealSupplementError = "The sixth intake slot must be returned in supplements when 6 meals are requested.";
 
 export async function generateSingleFoodPlan(
   userData: DataUserCommand,
@@ -253,13 +255,26 @@ function shouldFallbackToDailyGeneration(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes("Incomplete JSON response from API")
     || message.includes("could not parse the JSON body of your request")
-    || message.includes(missingSingleFoodSupplementError);
+    || message.includes(missingSingleFoodSupplementError)
+    || message.includes(missingSixthMealSupplementError);
 }
 
 function buildSingleFoodSupplementRule(
   userData: DataUserCommand,
   compactMode: boolean,
 ): string {
+  if (requiresSupplementSlotForMealCount(userData.numberOfMeals)) {
+    if (!hasConfiguredSupplements(userData)) {
+      return compactMode
+        ? "- Because the user requested 6 meals per day, use supplements as a non-empty sixth intake slot with a simple protein shake or similar add-on."
+        : "- Because the user requested 6 meals per day, supplements must contain a sixth intake slot such as a protein shake or simple add-on. Do not leave supplements empty.";
+    }
+
+    return compactMode
+      ? "- Include each listed supplement exactly once in supplements and keep supplements non-empty for the sixth intake slot."
+      : "- For every day, include the user's listed supplements in supplements and keep supplements non-empty because it also serves as the sixth intake slot.";
+  }
+
   if (!hasConfiguredSupplements(userData)) {
     return "- Use an empty supplements array.";
   }
@@ -270,6 +285,14 @@ function buildSingleFoodSupplementRule(
 }
 
 function buildSingleFoodDailySupplementRule(userData: DataUserCommand): string {
+  if (requiresSupplementSlotForMealCount(userData.numberOfMeals)) {
+    if (!hasConfiguredSupplements(userData)) {
+      return "Use supplements as the sixth intake slot and do not leave the supplements array empty.";
+    }
+
+    return `Include each listed supplement exactly once in supplements for ${userData.name}, and keep supplements non-empty as the sixth intake slot: ${getConfiguredSupplements(userData).join(", ")}.`;
+  }
+
   if (!hasConfiguredSupplements(userData)) {
     return "Use an empty supplements array.";
   }
@@ -300,6 +323,10 @@ function ensureSingleFoodDaySupplements(
   day: DietPlanDay,
   userData: DataUserCommand,
 ): void {
+  if (requiresSupplementSlotForMealCount(userData.numberOfMeals) && day.supplements.length === 0) {
+    throw new Error(missingSixthMealSupplementError);
+  }
+
   if (!hasConfiguredSupplements(userData)) {
     return;
   }

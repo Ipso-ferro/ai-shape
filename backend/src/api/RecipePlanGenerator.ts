@@ -9,6 +9,7 @@ import {
   calculateDietContext,
   ensureDietPlanDayMatchesMealCount,
   ensureDietPlanMatchesMealCount,
+  requiresSupplementSlotForMealCount,
   validateDietPlanDay,
 } from "./dietPlanGenerationShared";
 import { createOpenAIClient, MODEL, DIET_PLAN_MAX_TOKENS } from "./client";
@@ -98,19 +99,20 @@ function buildRecipePrompt(
   options: { strictMode: boolean; compactMode: boolean },
 ): string {
   const context = calculateDietContext(userData, "recipes");
+  const supplementRule = buildRecipeSupplementRule(userData, options.compactMode);
   const compactRules = options.compactMode
     ? `
 - Keep every description to 8 words or fewer.
 - Use 3 or 4 ingredients per meal.
 - Use exactly 2 short instructions for snacks and 3 short instructions for breakfast, lunch, and dinner.
-- Keep supplements as [] unless the user explicitly listed supplements.
+- ${supplementRule}
 - Keep every instruction short.
 `
     : `
 - Keep descriptions concise.
 - Use 3 to 5 ingredients per meal.
 - Use 2 to 4 short instructions per meal.
-- Keep supplements minimal unless they are relevant.
+- ${supplementRule}
 `;
 
   return `Create a personalized 7-day recipe diet plan.
@@ -228,6 +230,9 @@ function buildRecipeDayPrompt(
   dayName: string,
 ): string {
   const context = calculateDietContext(userData, "recipes");
+  const supplementRule = requiresSupplementSlotForMealCount(userData.numberOfMeals)
+    ? "Keep supplements non-empty and use them as the sixth intake slot."
+    : "Keep supplements as [] unless clearly needed.";
 
   return `Create only day ${dayNumber} (${dayName}) of a recipe diet plan.
 
@@ -253,10 +258,25 @@ RULES:
 - Every meal must include at least 3 ingredients.
 - Every meal must include 2 or 3 short instructions.
 - Keep descriptions concise.
-- Keep supplements as [] unless clearly needed.
+- ${supplementRule}
 ${buildMealCountPromptGuidance(userData.numberOfMeals)}
 
 Return only valid JSON that matches the provided response schema exactly.`;
+}
+
+function buildRecipeSupplementRule(
+  userData: DataUserCommand,
+  compactMode: boolean,
+): string {
+  if (!requiresSupplementSlotForMealCount(userData.numberOfMeals)) {
+    return compactMode
+      ? "Keep supplements as [] unless the user explicitly listed supplements."
+      : "Keep supplements minimal unless they are relevant.";
+  }
+
+  return compactMode
+    ? "Because the user requested 6 meals per day, supplements must be non-empty and act as the sixth intake slot."
+    : "Because the user requested 6 meals per day, supplements must be non-empty and can include a simple shake or add-on as the sixth intake slot.";
 }
 
 function shouldFallbackToDailyGeneration(error: unknown): boolean {

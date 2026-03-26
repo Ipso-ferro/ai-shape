@@ -1525,6 +1525,8 @@ function App() {
                 weekProgress={weekProgress}
                 pendingMealKey={pendingMealKey}
                 energyUnitPreference={user.energyUnitPreference}
+                mealTargetCount={user.numberOfMeals}
+                hasConfiguredSupplements={user.supplementation.length > 0}
                 onGenerateMissingDietType={generateMissingDietMode}
                 generationStatus={dietGenerationStatus}
               />
@@ -1688,7 +1690,7 @@ function DashboardView(props: {
                   <span>{humanDate(weekDay.date)}</span>
                 </div>
                 <div className="mini-row-values">
-                  <span>{progress?.totals.mealsCompleted ?? 0}/6 meals</span>
+                  <span>{progress?.totals.mealsCompleted ?? 0}/{user.numberOfMeals} meals</span>
                   <span>{progress?.workout.completed ? "Workout done" : "Workout open"}</span>
                 </div>
               </div>
@@ -1837,6 +1839,8 @@ function DietView(props: {
   weekProgress: Record<string, ProgressDay>;
   pendingMealKey: string | null;
   energyUnitPreference: EnergyUnit;
+  mealTargetCount: number;
+  hasConfiguredSupplements: boolean;
   onGenerateMissingDietType: (dietType: DietType) => Promise<void>;
   generationStatus: SectionGenerationStatus | null;
 }) {
@@ -1948,12 +1952,17 @@ function DietView(props: {
           const currentMealKey = `${activeDate}:${meal.slot}`;
           const primaryEntry = entries[0];
           const cardTitle = primaryEntry?.object ?? "Open slot";
+          const mealLabel = meal.slot === "supplements"
+            && props.mealTargetCount === 6
+            && !props.hasConfiguredSupplements
+            ? "Meal 6"
+            : meal.title;
 
           return (
             <article key={meal.slot} className="panel meal-card">
               <div className="panel-header split-end">
                 <div>
-                  <span className="eyebrow">{meal.title}</span>
+                  <span className="eyebrow">{mealLabel}</span>
                   <h3>{cardTitle}</h3>
                 </div>
                 <button

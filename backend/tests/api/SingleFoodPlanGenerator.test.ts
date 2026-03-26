@@ -35,6 +35,14 @@ const buildUser = (supplementation: string[]): DataUserCommand => ({
   isPro: false,
 });
 
+const buildUserWithMealCount = (
+  supplementation: string[],
+  numberOfMeals: number,
+): DataUserCommand => ({
+  ...buildUser(supplementation),
+  numberOfMeals,
+});
+
 test("single-food weekly prompt requires listed supplements", () => {
   const prompt = buildSingleFoodPrompt(buildUser(["creatine", "whey protein"]), false);
 
@@ -54,4 +62,13 @@ test("single-food prompt keeps supplements empty when none are configured", () =
   const prompt = buildSingleFoodPrompt(buildUser([]), true);
 
   assert.match(prompt, /Use an empty supplements array/);
+});
+
+test("single-food prompts require a non-empty supplements slot when 6 meals are requested", () => {
+  const weeklyPrompt = buildSingleFoodPrompt(buildUserWithMealCount([], 6), true);
+  const dailyPrompt = buildSingleFoodDayPrompt(buildUserWithMealCount([], 6), 1, "Monday");
+
+  assert.doesNotMatch(weeklyPrompt, /Use an empty supplements array/);
+  assert.match(weeklyPrompt, /sixth intake slot/i);
+  assert.match(dailyPrompt, /do not leave the supplements array empty/i);
 });

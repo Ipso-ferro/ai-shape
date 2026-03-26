@@ -63,6 +63,7 @@ interface DietGenerationDependencies {
 
 type DietEntryKind = "recipe-meal" | "single-food-meal" | "supplement";
 type DietMealSlot = "breakfast" | "snack1" | "lunch" | "dinner" | "snack2";
+type DietConsumableSlot = DietMealSlot | "supplements";
 
 const dietMealSlots: DietMealSlot[] = [
   "breakfast",
@@ -79,6 +80,17 @@ const dietMealSlotLabels: Record<DietMealSlot, string> = {
   dinner: "Dinner",
   snack2: "Snack 2",
 };
+
+const dietConsumableSlotLabels: Record<DietConsumableSlot, string> = {
+  ...dietMealSlotLabels,
+  supplements: "Supplements",
+};
+
+const normalizeMealCount = (numberOfMeals: number): number => (
+  Number.isFinite(numberOfMeals)
+    ? Math.max(1, Math.min(6, Math.round(numberOfMeals)))
+    : 3
+);
 
 export const createEmptyDietEntry = (): DietPlanEntry => ({
   object: "",
@@ -271,9 +283,7 @@ export const buildDietPlanDaySchema = (dietType: DietType): JsonSchema => (
 export const resolveActiveDietMealSlots = (
   numberOfMeals: number,
 ): DietMealSlot[] => {
-  const normalizedMealCount = Number.isFinite(numberOfMeals)
-    ? Math.max(1, Math.min(5, Math.round(numberOfMeals)))
-    : 3;
+  const normalizedMealCount = normalizeMealCount(numberOfMeals);
 
   switch (normalizedMealCount) {
     case 1:
@@ -287,6 +297,19 @@ export const resolveActiveDietMealSlots = (
     default:
       return [...dietMealSlots];
   }
+};
+
+export const requiresSupplementSlotForMealCount = (
+  numberOfMeals: number,
+): boolean => normalizeMealCount(numberOfMeals) === 6;
+
+const resolveActiveDietConsumableSlots = (
+  numberOfMeals: number,
+): DietConsumableSlot[] => {
+  const activeSlots = resolveActiveDietMealSlots(numberOfMeals);
+  return requiresSupplementSlotForMealCount(numberOfMeals)
+    ? [...activeSlots, "supplements"]
+    : activeSlots;
 };
 
 const resolveInactiveDietMealSlots = (numberOfMeals: number): DietMealSlot[] => {
@@ -307,17 +330,27 @@ export const isEmptyDietEntry = (entry: DietPlanEntry): boolean => (
 );
 
 export const buildMealCountPromptGuidance = (numberOfMeals: number): string => {
+  const normalizedMealCount = normalizeMealCount(numberOfMeals);
   const activeMealLabels = resolveActiveDietMealSlots(numberOfMeals)
     .map((slot) => dietMealSlotLabels[slot])
+    .join(", ");
+  const activeConsumableLabels = resolveActiveDietConsumableSlots(numberOfMeals)
+    .map((slot) => dietConsumableSlotLabels[slot])
     .join(", ");
   const inactiveMealLabels = resolveInactiveDietMealSlots(numberOfMeals)
     .map((slot) => dietMealSlotLabels[slot]);
 
-  if (inactiveMealLabels.length === 0) {
-    return `- The user requested ${Math.max(1, Math.min(5, Math.round(numberOfMeals) || 5))} meals per day, so use all meal slots: ${activeMealLabels}.`;
+  if (requiresSupplementSlotForMealCount(numberOfMeals)) {
+    return `- The user requested ${normalizedMealCount} meals per day.
+- Use all standard meal slots plus a populated supplements slot as the sixth intake: ${activeConsumableLabels}.
+- Do not leave supplements empty when 6 meals are requested.`;
   }
 
-  return `- The user requested ${Math.max(1, Math.min(5, Math.round(numberOfMeals) || 3))} meals per day.
+  if (inactiveMealLabels.length === 0) {
+    return `- The user requested ${normalizedMealCount} meals per day, so use all meal slots: ${activeMealLabels}.`;
+  }
+
+  return `- The user requested ${normalizedMealCount} meals per day.
 - Only these meal slots may contain real meals: ${activeMealLabels}.
 - For inactive meal slots (${inactiveMealLabels.join(", ")}), return this exact empty placeholder object: ${JSON.stringify(createEmptyDietEntry())}`;
 };
@@ -344,6 +377,10 @@ export const ensureDietPlanDayMatchesMealCount = (
         .map((slot) => dietMealSlotLabels[slot])
         .join(", ")}.`,
     );
+  }
+
+  if (requiresSupplementSlotForMealCount(numberOfMeals) && day.supplements.length === 0) {
+    throw new Error("Diet plan is missing required meals for slots: Supplements.");
   }
 };
 

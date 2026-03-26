@@ -3,6 +3,7 @@ dist/
 .DS_Store
 .env
 .npm-cache/
+.vite-cache/
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts

@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { DataUserCommand, DietPlan } from "../../src/types";
 import {
   applyMealCountToDietPlan,
+  buildMealCountPromptGuidance,
   createEmptyDietEntry,
+  ensureDietPlanDayMatchesMealCount,
   executeDietPlanGeneration,
   resolveActiveDietMealSlots,
   validateDietPlanResponse,
@@ -46,6 +48,7 @@ const buildEntry = (options?: {
 
 const buildPlan = (
   entryFactory: () => DietPlan["days"][number]["breakfast"],
+  supplementsFactory: () => DietPlan["days"][number]["supplements"] = () => [],
 ): DietPlan => ({
   summary: {
     dailyCalories: 2300,
@@ -64,8 +67,26 @@ const buildPlan = (
     lunch: entryFactory(),
     dinner: entryFactory(),
     snack2: entryFactory(),
-    supplements: [],
+    supplements: supplementsFactory(),
   })),
+});
+
+const buildSupplementEntry = (): DietPlan["days"][number]["supplements"][number] => ({
+  object: "Protein Shake",
+  description: "Quick recovery shake.",
+  quantity: 1,
+  quantityUnit: "serve",
+  ingredients: [
+    { item: "Whey protein", quantity: 35, quantityUnit: "g" },
+    { item: "Milk", quantity: 300, quantityUnit: "ml" },
+  ],
+  macros: {
+    protein: "30g",
+    carbs: "12g",
+    fats: "5g",
+  },
+  calories: 220,
+  kilojoules: 920,
 });
 
 const sampleUser: DataUserCommand = {
@@ -258,4 +279,26 @@ test("meal-count helpers keep only the requested two meal slots populated", () =
   assert.notDeepEqual(firstDay.lunch, createEmptyDietEntry());
   assert.notDeepEqual(firstDay.dinner, createEmptyDietEntry());
   assert.deepEqual(firstDay.snack2, createEmptyDietEntry());
+});
+
+test("meal-count helpers keep only lunch populated for one meal per day", () => {
+  const plan = buildPlan(() => buildEntry());
+  const normalizedPlan = applyMealCountToDietPlan(plan, 1);
+  const [firstDay] = normalizedPlan.days;
+
+  assert.deepEqual(resolveActiveDietMealSlots(1), ["lunch"]);
+  assert.deepEqual(firstDay.breakfast, createEmptyDietEntry());
+  assert.deepEqual(firstDay.snack1, createEmptyDietEntry());
+  assert.notDeepEqual(firstDay.lunch, createEmptyDietEntry());
+  assert.deepEqual(firstDay.dinner, createEmptyDietEntry());
+  assert.deepEqual(firstDay.snack2, createEmptyDietEntry());
+});
+
+test("six meals per day require a populated supplements slot", () => {
+  const planWithoutSupplements = buildPlan(() => buildEntry());
+  const planWithSupplements = buildPlan(() => buildEntry(), () => [buildSupplementEntry()]);
+
+  assert.match(buildMealCountPromptGuidance(6), /sixth intake/i);
+  assert.throws(() => ensureDietPlanDayMatchesMealCount(planWithoutSupplements.days[0], 6), /Supplements/);
+  assert.doesNotThrow(() => ensureDietPlanDayMatchesMealCount(planWithSupplements.days[0], 6));
 });
