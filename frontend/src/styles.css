@@ -625,71 +625,6 @@ label > span {
   align-content: start;
 }
 
-.hero-banner {
-  display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
-  gap: 1rem;
-  padding: 1.6rem;
-  border-radius: var(--radius-3xl);
-  border: 1px solid rgba(255, 255, 255, 0.58);
-  background:
-    radial-gradient(circle at top right, rgba(235, 116, 73, 0.15), transparent 28%),
-    linear-gradient(180deg, rgba(255, 252, 247, 0.96), rgba(255, 246, 233, 0.9));
-  box-shadow: var(--shadow-md);
-}
-
-.hero-banner h2 {
-  max-width: 13ch;
-  font-size: clamp(2.15rem, 4vw, 3.1rem);
-  line-height: 0.98;
-}
-
-.hero-banner p {
-  max-width: 54ch;
-  margin-top: 0.75rem;
-}
-
-.hero-stats {
-  display: grid;
-  gap: 0.85rem;
-}
-
-.hero-stats article {
-  display: flex;
-  gap: 0.875rem;
-  align-items: flex-start;
-  padding: 1rem 1.1rem;
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--app-border);
-  background: rgba(255, 255, 255, 0.76);
-  box-shadow: var(--shadow-xs);
-}
-
-.hero-stat-icon {
-  width: 2.5rem;
-  height: 2.5rem;
-  flex: 0 0 auto;
-  border-radius: 0.875rem;
-  background: var(--app-brand-soft);
-  color: var(--color-brand-700);
-}
-
-.hero-stat-copy {
-  display: grid;
-  gap: 0.25rem;
-}
-
-.hero-stat-copy span {
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--app-text-tertiary);
-}
-
-.hero-stats strong {
-  font-size: 1.15rem;
-  color: var(--app-text);
-}
-
 .view-grid,
 .onboarding-layout,
 .settings-layout,
@@ -1188,6 +1123,16 @@ label > span {
   gap: 0.85rem;
 }
 
+.shopping-week-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--app-border);
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1211,6 +1156,14 @@ label > span {
 .empty-state {
   place-items: start;
   gap: 0.75rem;
+}
+
+.empty-state .shopping-week-actions {
+  width: 100%;
+  justify-content: center;
+  margin-top: 0.5rem;
+  padding-top: 0;
+  border-top: 0;
 }
 
 .empty-state .panel-status-card {
@@ -1294,7 +1247,6 @@ label > span {
 @media (max-width: 1180px) {
   .app-shell,
   .auth-layout,
-  .hero-banner,
   .view-grid,
   .meals-grid,
   .workout-columns,
@@ -1344,7 +1296,6 @@ label > span {
   }
 
   .sidebar,
-  .hero-banner,
   .auth-hero,
   .auth-card,
   .panel {

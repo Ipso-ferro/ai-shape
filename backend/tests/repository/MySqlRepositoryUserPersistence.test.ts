@@ -617,20 +617,25 @@ test("diet and workout plan rows persist ids and completion flags", async (t) =>
   const updatedDietRow = await getDietRowState("user_diet_plan", userId, "current", 1);
   const untouchedRecipeRow = await getDietRowState("user_recipe_plan", userId, "current", 1);
   const updatedWorkoutRow = await getWorkoutRowState(userId, 1);
+  const updatedWorkoutPlan = await repository.getWorkoutPlan(userId);
 
   assert.equal(Boolean(updatedDietRow?.breakfast_eaten), true);
   assert.equal(Boolean(updatedDietRow?.lunch_eaten), false);
   assert.equal(Boolean(untouchedRecipeRow?.breakfast_eaten), false);
   assert.equal(Boolean(updatedWorkoutRow?.complete), true);
+  assert.equal(updatedWorkoutPlan?.days[0]?.completed, true);
+  assert.equal(updatedWorkoutPlan?.days[1]?.completed, false);
 
   await repository.syncDietPlanMealEatenState(userId, "single-food", 1, "breakfast", false, "current");
   await repository.syncWorkoutPlanDayCompletionState(userId, 1, false);
 
   const resetDietRow = await getDietRowState("user_diet_plan", userId, "current", 1);
   const resetWorkoutRow = await getWorkoutRowState(userId, 1);
+  const resetWorkoutPlan = await repository.getWorkoutPlan(userId);
 
   assert.equal(Boolean(resetDietRow?.breakfast_eaten), false);
   assert.equal(Boolean(resetWorkoutRow?.complete), false);
+  assert.equal(resetWorkoutPlan?.days[0]?.completed, false);
 });
 
 test("progress tracking rows persist ids", async (t) => {

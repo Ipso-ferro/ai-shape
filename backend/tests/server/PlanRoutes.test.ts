@@ -117,6 +117,16 @@ class RepositoryUserMock implements RepositoryUser {
     };
   }
 
+  private buildWorkoutPlanWithCompletionState(workoutPlan: WorkoutPlan): WorkoutPlan {
+    return {
+      ...workoutPlan,
+      days: workoutPlan.days.map((day) => ({
+        ...day,
+        completed: this.getWorkoutPlanCompletionState(day.day) ?? false,
+      })),
+    };
+  }
+
   async addNewUser(user: CreateUserRecordCommand): Promise<void> {
     const storedUser: DataUserCommand = {
       id: user.id,
@@ -222,7 +232,7 @@ class RepositoryUserMock implements RepositoryUser {
   }
 
   async getWorkoutPlan(_userId: string): Promise<WorkoutPlan | null> {
-    return this.workoutPlan;
+    return this.workoutPlan ? this.buildWorkoutPlanWithCompletionState(this.workoutPlan) : null;
   }
 
   async saveShoppingList(
@@ -880,6 +890,15 @@ test("PUT /progress/users/:id/meals/:mealSlot and /workout track daily energy to
     assert.equal(workoutPayload.totals.kilojoulesBurned, 1464);
     assert.equal(workoutPayload.totals.netCalories, 30);
     assert.equal(repositoryUser.getWorkoutPlanCompletionState(1), true);
+
+    const storedWorkoutResponse = await fetch(`${baseUrl}/workouts/users/${sampleUser.id}/plan`, {
+      headers: createAuthHeaders(),
+    });
+    assert.equal(storedWorkoutResponse.status, 200);
+
+    const storedWorkoutPayload = await storedWorkoutResponse.json();
+    assert.equal(storedWorkoutPayload.days[0].completed, true);
+    assert.equal(storedWorkoutPayload.days[1].completed, false);
 
     const dayResponse = await fetch(
       `${baseUrl}/progress/users/${sampleUser.id}/day?date=2026-03-02`,

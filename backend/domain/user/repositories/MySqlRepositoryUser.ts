@@ -108,6 +108,7 @@ interface WorkoutPlanDayRow extends RowDataPacket {
   total_duration: string;
   estimated_calories_burned: number | string | null;
   estimated_kilojoules_burned: number | string | null;
+  complete: number | boolean | null;
 }
 
 interface UserProgressTrackingRow extends RowDataPacket {
@@ -654,6 +655,7 @@ const mapRowsToWorkoutPlan = (
     totalDuration: row.total_duration,
     estimatedCaloriesBurned: toNumber(row.estimated_calories_burned),
     estimatedKilojoulesBurned: toNumber(row.estimated_kilojoules_burned),
+    completed: toBoolean(row.complete),
   })),
 });
 
@@ -1348,7 +1350,7 @@ export class MySqlRepositoryUser implements RepositoryUser {
             day.totalDuration,
             day.estimatedCaloriesBurned ?? 0,
             day.estimatedKilojoulesBurned ?? 0,
-            false,
+            day.completed ?? false,
           ],
         );
       }
@@ -1402,7 +1404,8 @@ export class MySqlRepositoryUser implements RepositoryUser {
             cool_down,
             total_duration,
             estimated_calories_burned,
-            estimated_kilojoules_burned
+            estimated_kilojoules_burned,
+            complete
           FROM user_workout_plan_days
           WHERE user_id = ?
           ORDER BY day_number ASC

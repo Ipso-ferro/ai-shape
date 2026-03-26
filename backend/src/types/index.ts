@@ -124,6 +124,7 @@ export interface WorkoutPlanDay {
   totalDuration: string;
   estimatedCaloriesBurned?: number;
   estimatedKilojoulesBurned?: number;
+  completed?: boolean;
 }
 
 export interface WorkoutPlan {

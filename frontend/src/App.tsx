@@ -11,7 +11,6 @@ import {
   Activity,
   ArrowRight,
   BarChartSquare02,
-  CalendarCheck02,
   CheckCircle,
   Package,
   RefreshCcw02,
@@ -351,6 +350,14 @@ const withDietMealStateDefaults = (plan: DietPlan): DietPlan => ({
   })),
 });
 
+const withWorkoutCompletionStateDefaults = (plan: WorkoutPlan): WorkoutPlan => ({
+  ...plan,
+  days: plan.days.map((day) => ({
+    ...day,
+    completed: day.completed ?? false,
+  })),
+});
+
 const patchDietPlansMealState = (
   dietPlans: Record<DietType, DietPlan | null>,
   dietType: DietType,
@@ -381,6 +388,28 @@ const patchDietPlansMealState = (
           : day
       )),
     },
+  };
+};
+
+const patchWorkoutPlanCompletionState = (
+  workoutPlan: WorkoutPlan | null,
+  dayNumber: number,
+  completed: boolean,
+): WorkoutPlan | null => {
+  if (!workoutPlan) {
+    return workoutPlan;
+  }
+
+  return {
+    ...workoutPlan,
+    days: workoutPlan.days.map((day) => (
+      day.day === dayNumber
+        ? {
+          ...day,
+          completed,
+        }
+        : day
+    )),
   };
 };
 
@@ -542,7 +571,6 @@ function App() {
   const weekDays = getCurrentWeek();
   const today = todayKey();
   const weekByNumber = dayDateMap(weekDays);
-  const currentWeekPosition = weekDays.find((day) => day.date === today)?.dayNumber ?? 1;
   const profileComplete = user ? isProfileReady(user) : false;
   const activeDietType = resolveCurrentDietType(user);
   const activeCurrentShoppingList = shoppingLists.current[activeDietType];
@@ -796,7 +824,7 @@ function App() {
           "single-food": singleFoodDiet ? withDietMealStateDefaults(singleFoodDiet) : null,
           recipes: recipeDiet ? withDietMealStateDefaults(recipeDiet) : null,
         });
-        setWorkoutPlan(freshWorkout);
+        setWorkoutPlan(freshWorkout ? withWorkoutCompletionStateDefaults(freshWorkout) : null);
         setShoppingLists({
           current: {
             "single-food": singleFoodShoppingCurrent,
@@ -1020,7 +1048,7 @@ function App() {
     }
 
     if (result.workoutPlan) {
-      setWorkoutPlan(result.workoutPlan);
+      setWorkoutPlan(withWorkoutCompletionStateDefaults(result.workoutPlan));
     }
 
     if (result.shoppingList) {
@@ -1132,7 +1160,7 @@ function App() {
       const generatedWorkoutPlan = await api.generateWorkoutPlan(requestUserId);
 
       if (isCurrentSession(requestUserId)) {
-        setWorkoutPlan(generatedWorkoutPlan);
+        setWorkoutPlan(withWorkoutCompletionStateDefaults(generatedWorkoutPlan));
       }
 
       markWorkoutRefreshMonth(requestUserId);
@@ -1193,6 +1221,8 @@ function App() {
     }
 
     const mappedDate = weekByNumber[day.day];
+    const previousWorkoutPlan = workoutPlan;
+    setWorkoutPlan((current) => patchWorkoutPlanCompletionState(current, day.day, completed));
     setPendingWorkoutDay(day.day);
 
     try {
@@ -1205,6 +1235,7 @@ function App() {
 
       await refreshProgress(sessionUserId);
     } catch (error) {
+      setWorkoutPlan(previousWorkoutPlan);
       setErrorMessage(error instanceof Error ? error.message : "Unable to update workout progress");
     } finally {
       setPendingWorkoutDay(null);
@@ -1437,50 +1468,6 @@ function App() {
         </aside>
 
         <main className="workspace">
-          <section className="hero-banner">
-          <div>
-            <span className="eyebrow">Today at a glance</span>
-            <h2>
-              {profileComplete
-                ? "A live board for your food, training, and recovery signals."
-                : "Complete the intake first. Then the weekly dashboard comes alive."}
-            </h2>
-            <p>
-              Track eaten meals, completed sessions, your weekly market list, and tune the plan
-              from the same workspace.
-            </p>
-          </div>
-          <div className="hero-stats">
-            <article>
-              <span className="hero-stat-icon">
-                <Target04 />
-              </span>
-              <div className="hero-stat-copy">
-                <span>Diet Mode</span>
-                <strong>{user.kindOfDiet === "recipes" ? "Recipes" : "Single foods"}</strong>
-              </div>
-            </article>
-            <article>
-              <span className="hero-stat-icon">
-                <Zap />
-              </span>
-              <div className="hero-stat-copy">
-                <span>Daily Target</span>
-                <strong>{formatEnergyValue(user.kilojoulesTarget, user.energyUnitPreference)}</strong>
-              </div>
-            </article>
-            <article>
-              <span className="hero-stat-icon">
-                <CalendarCheck02 />
-              </span>
-              <div className="hero-stat-copy">
-                <span>Week Coverage</span>
-                <strong>{currentWeekPosition}/7</strong>
-              </div>
-            </article>
-          </div>
-        </section>
-
         {errorMessage ? <div className="inline-error workspace-error">{errorMessage}</div> : null}
 
         {!profileComplete ? (
@@ -2045,7 +2032,7 @@ function WorkoutView(props: {
   }
 
   const activeDay = props.plan.days.find((day) => day.day === props.selectedDay) ?? props.plan.days[0];
-  const progress = props.weekProgress[props.weekDays.find((day) => day.dayNumber === activeDay.day)?.date ?? todayKey()];
+  const workoutCompleted = activeDay.completed ?? false;
 
   return (
     <div className="stack-page">
@@ -2112,13 +2099,13 @@ function WorkoutView(props: {
           </div>
           <button
             type="button"
-            className={progress?.workout.completed ? "check-button active" : "check-button"}
-            onClick={() => props.onToggleWorkout(activeDay, !(progress?.workout.completed ?? false))}
+            className={workoutCompleted ? "check-button active" : "check-button"}
+            onClick={() => props.onToggleWorkout(activeDay, !workoutCompleted)}
             disabled={props.pendingWorkoutDay === activeDay.day}
           >
             {props.pendingWorkoutDay === activeDay.day
               ? "Saving..."
-              : progress?.workout.completed ? "Completed" : "Mark complete"}
+              : workoutCompleted ? "Completed" : "Mark complete"}
           </button>
         </div>
 
@@ -2170,13 +2157,29 @@ function ShoppingView(props: {
   pendingItemId: string | null;
 }) {
   const shoppingList = props.shoppingLists[props.selectedWeek][props.selectedDietType];
+  const weekSwitchButtons = (
+    <div className="shopping-week-actions">
+      {planWeeks.map((week) => (
+        <button
+          key={week}
+          type="button"
+          className={week === props.selectedWeek ? "toggle active" : "toggle"}
+          onClick={() => props.onSelectWeek(week)}
+        >
+          {week === "current" ? "This week" : "Next week"}
+        </button>
+      ))}
+    </div>
+  );
 
   if (!shoppingList) {
     return (
       <EmptyState
         title={`No ${props.selectedWeek === "next" ? "next-week" : "current-week"} ${props.selectedDietType === "recipes" ? "recipe" : "single-food"} market list yet`}
         body="That market table has not been generated yet. Current and next-week lists are stored separately for each diet mode."
-      />
+      >
+        {weekSwitchButtons}
+      </EmptyState>
     );
   }
 
@@ -2201,16 +2204,6 @@ function ShoppingView(props: {
                 {item.label}
               </button>
             ))}
-            {planWeeks.map((week) => (
-              <button
-                key={week}
-                type="button"
-                className={week === props.selectedWeek ? "toggle active" : "toggle"}
-                onClick={() => props.onSelectWeek(week)}
-              >
-                {week === "current" ? "This week" : "Next week"}
-              </button>
-            ))}
           </div>
         </div>
         <div className="stats-grid">
@@ -2232,6 +2225,7 @@ function ShoppingView(props: {
             <MetricCard title="Aldi" value={`$${shoppingList.metadata.estimatedCostAudByStore.aldi}`} detail="Estimated basket" />
           </div>
         ) : null}
+        {weekSwitchButtons}
       </section>
 
       {entries.map(([category, items]) => (
