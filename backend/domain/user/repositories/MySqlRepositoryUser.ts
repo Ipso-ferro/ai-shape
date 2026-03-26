@@ -35,6 +35,7 @@ import {
   UserProgressDay,
   UserProgressMealStatus,
   UserTrackingEntry,
+  UserWaterEntry,
   WorkoutExercise,
   WorkoutPlan,
 } from "../../../src/types";
@@ -182,6 +183,15 @@ interface UserExerciseLogRow extends RowDataPacket {
   reps_completed: number | string;
   weight_used: number | string;
   volume: number | string;
+}
+
+interface UserWaterRow extends RowDataPacket {
+  user_id: string;
+  date: string | Date;
+  target_liters: number | string;
+  target_glasses: number | string;
+  glasses_completed: number | string;
+  liters_per_glass: number | string;
 }
 
 interface DatabaseError {
@@ -577,6 +587,24 @@ const assertUserTrackingEntry = (entry: UserTrackingEntry): void => {
   assertFiniteNumber(entry.kjsBurnedTarget, "kjsBurnedTarget");
 };
 
+const assertUserWaterEntry = (entry: UserWaterEntry): void => {
+  assertNonEmptyString(entry.userId, "userId");
+  assertNonEmptyString(entry.date, "date");
+  assertFiniteNumber(entry.targetLiters, "targetLiters");
+  assertPositiveInteger(entry.targetGlasses, "targetGlasses");
+  assertFiniteNumber(entry.glassesCompleted, "glassesCompleted");
+  assertFiniteNumber(entry.litersPerGlass, "litersPerGlass");
+  assertFiniteNumber(entry.completedLiters, "completedLiters");
+
+  if (entry.glassesCompleted < 0) {
+    throw new ValidationError('"glassesCompleted" must be a non-negative number.');
+  }
+
+  if (entry.glassesCompleted > entry.targetGlasses) {
+    throw new ValidationError('"glassesCompleted" cannot be greater than "targetGlasses".');
+  }
+};
+
 const assertUserExerciseLogInput = (log: UserExerciseLogInput): void => {
   assertNonEmptyString(log.exerciseName, "exerciseName");
   assertFiniteNumber(log.setsCompleted, "setsCompleted");
@@ -803,6 +831,23 @@ const mapRowToUserTrackingEntry = (
   kjsBurnedTarget: toNumber(row.kjs_burned_target),
 });
 
+const mapRowToUserWaterEntry = (
+  row: UserWaterRow,
+): UserWaterEntry => {
+  const litersPerGlass = Math.round(toNumber(row.liters_per_glass, 1) * 10) / 10;
+  const glassesCompleted = Math.round(toNumber(row.glasses_completed));
+
+  return {
+    userId: row.user_id,
+    date: toDateString(row.date),
+    targetLiters: Math.round(toNumber(row.target_liters) * 10) / 10,
+    targetGlasses: Math.round(toNumber(row.target_glasses)),
+    glassesCompleted,
+    litersPerGlass,
+    completedLiters: Math.round(glassesCompleted * litersPerGlass * 10) / 10,
+  };
+};
+
 const mapRowToUserExerciseLog = (
   row: UserExerciseLogRow,
 ): UserExerciseLog => ({
@@ -982,6 +1027,84 @@ export class MySqlRepositoryUser implements RepositoryUser {
       );
 
       return rows.map(mapRowToUserTrackingEntry);
+    } catch (error) {
+      return handleRepositoryError(error);
+    }
+  }
+
+  async saveUserWaterEntry(entry: UserWaterEntry): Promise<UserWaterEntry> {
+    assertUserWaterEntry(entry);
+
+    try {
+      await this.pool.execute<ResultSetHeader>(
+        `
+          INSERT INTO user_water (
+            user_id,
+            date,
+            target_liters,
+            target_glasses,
+            glasses_completed,
+            liters_per_glass
+          )
+          VALUES (?, ?, ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+            target_liters = VALUES(target_liters),
+            target_glasses = VALUES(target_glasses),
+            glasses_completed = VALUES(glasses_completed),
+            liters_per_glass = VALUES(liters_per_glass)
+        `,
+        [
+          entry.userId,
+          entry.date,
+          Math.round(entry.targetLiters * 10) / 10,
+          Math.round(entry.targetGlasses),
+          Math.round(entry.glassesCompleted),
+          Math.round(entry.litersPerGlass * 10) / 10,
+        ],
+      );
+
+      return {
+        ...entry,
+        targetLiters: Math.round(entry.targetLiters * 10) / 10,
+        targetGlasses: Math.round(entry.targetGlasses),
+        glassesCompleted: Math.round(entry.glassesCompleted),
+        litersPerGlass: Math.round(entry.litersPerGlass * 10) / 10,
+        completedLiters: Math.round(entry.completedLiters * 10) / 10,
+      };
+    } catch (error) {
+      return handleRepositoryError(error);
+    }
+  }
+
+  async listUserWaterEntries(
+    userId: string,
+    startDate: string,
+    endDate: string,
+  ): Promise<UserWaterEntry[]> {
+    assertNonEmptyString(userId, "userId");
+    assertNonEmptyString(startDate, "startDate");
+    assertNonEmptyString(endDate, "endDate");
+
+    try {
+      const [rows] = await this.pool.execute<UserWaterRow[]>(
+        `
+          SELECT
+            user_id,
+            date,
+            target_liters,
+            target_glasses,
+            glasses_completed,
+            liters_per_glass
+          FROM user_water
+          WHERE user_id = ?
+            AND date >= ?
+            AND date <= ?
+          ORDER BY date ASC
+        `,
+        [userId, startDate, endDate],
+      );
+
+      return rows.map(mapRowToUserWaterEntry);
     } catch (error) {
       return handleRepositoryError(error);
     }

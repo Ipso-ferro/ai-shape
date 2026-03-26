@@ -4,6 +4,7 @@ SET FOREIGN_KEY_CHECKS = 0;
 
 TRUNCATE TABLE user_tracking_history;
 TRUNCATE TABLE user_tracking;
+TRUNCATE TABLE user_water;
 TRUNCATE TABLE user_progress_tracking;
 TRUNCATE TABLE shopping_market_single_food_list;
 TRUNCATE TABLE shopping_market_recipes_list;

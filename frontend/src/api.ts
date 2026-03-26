@@ -7,6 +7,7 @@ import {
   UserExerciseLog,
   UserExerciseLogInput,
   UserTrackingEntry,
+  UserWaterEntry,
   PlanSelectionOptions,
   ProgressDay,
   ProgressSummary,
@@ -170,6 +171,9 @@ export const api = {
   getTrackingEntries: (userId: string, startDate: string, endDate: string) => request<UserTrackingEntry[]>(
     `/progress/users/${userId}/tracking?startDate=${startDate}&endDate=${endDate}`,
   ),
+  getWaterEntries: (userId: string, startDate: string, endDate: string) => request<UserWaterEntry[]>(
+    `/progress/users/${userId}/water?startDate=${startDate}&endDate=${endDate}`,
+  ),
   getExerciseLogs: (userId: string, startDate: string, endDate: string) => request<UserExerciseLog[]>(
     `/progress/users/${userId}/exercise-logs?startDate=${startDate}&endDate=${endDate}`,
   ),
@@ -196,6 +200,14 @@ export const api = {
   ) => request<ProgressDay>(`/progress/users/${userId}/workout`, {
     method: "PUT",
     body: JSON.stringify({ date, completed, exerciseLogs }),
+  }),
+  saveWater: (
+    userId: string,
+    date: string,
+    glassesCompleted: number,
+  ) => request<UserWaterEntry>(`/progress/users/${userId}/water`, {
+    method: "PUT",
+    body: JSON.stringify({ date, glassesCompleted }),
   }),
   toggleShoppingItem: (
     userId: string,

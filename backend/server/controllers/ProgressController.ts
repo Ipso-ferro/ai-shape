@@ -11,7 +11,14 @@ import {
 } from "../requests/ProgressRequest";
 import { UserProgressPeriod } from "../../src/types";
 
-const getDefaultDate = (): string => new Date().toISOString().slice(0, 10);
+const getDefaultDate = (): string => {
+  const value = new Date();
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+};
 
 const resolveCompleted = (value: boolean | undefined): boolean => value ?? true;
 
@@ -97,6 +104,23 @@ export class ProgressController {
     }
   };
 
+  getWater = async (
+    req: Request<ProgressRouteParams, unknown, unknown, ProgressRangeRequestQuery>,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> => {
+    try {
+      const result = await this.progressHandler.getWater({
+        userId: req.params.id,
+        startDate: req.query.startDate ?? getDefaultDate(),
+        endDate: req.query.endDate ?? req.query.startDate ?? getDefaultDate(),
+      });
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   trackMeal = async (
     req: Request<ProgressMealRouteParams, unknown, TrackProgressRequestBody>,
     res: Response,
@@ -136,6 +160,23 @@ export class ProgressController {
         date: req.body?.date ?? getDefaultDate(),
         completed: resolveCompleted(req.body?.completed),
         exerciseLogs: req.body?.exerciseLogs,
+      });
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  trackWater = async (
+    req: Request<ProgressRouteParams, unknown, TrackProgressRequestBody>,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> => {
+    try {
+      const result = await this.progressHandler.trackWater({
+        userId: req.params.id,
+        date: req.body?.date ?? getDefaultDate(),
+        glassesCompleted: Number(req.body?.glassesCompleted ?? 0),
       });
       res.status(200).json(result);
     } catch (error) {

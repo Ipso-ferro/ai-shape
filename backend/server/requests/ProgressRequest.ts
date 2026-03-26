@@ -14,6 +14,7 @@ export interface TrackProgressRequestBody {
   dietType?: DietType;
   week?: PlanWeek;
   exerciseLogs?: UserExerciseLogInput[];
+  glassesCompleted?: number;
 }
 
 export interface ProgressDayRequestQuery {

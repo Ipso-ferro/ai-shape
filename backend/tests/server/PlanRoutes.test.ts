@@ -31,6 +31,7 @@ import {
   UserExerciseLogInput,
   UserProgressDay,
   UserTrackingEntry,
+  UserWaterEntry,
   WorkoutPlan,
 } from "../../src/types";
 
@@ -40,6 +41,7 @@ class RepositoryUserMock implements RepositoryUser {
   private readonly shoppingLists = new Map<string, ShoppingList>();
   private readonly progressDays = new Map<string, UserProgressDay>();
   private readonly trackingEntries = new Map<string, UserTrackingEntry>();
+  private readonly waterEntries = new Map<string, UserWaterEntry>();
   private readonly exerciseLogs = new Map<string, UserExerciseLog[]>();
   private readonly dietMealEatenStates = new Map<string, boolean>();
   private readonly workoutDayCompletionStates = new Map<string, boolean>();
@@ -368,6 +370,25 @@ class RepositoryUserMock implements RepositoryUser {
     endDate: string,
   ): Promise<UserTrackingEntry[]> {
     return Array.from(this.trackingEntries.values())
+      .filter((entry) => (
+        entry.userId === userId
+        && entry.date >= startDate
+        && entry.date <= endDate
+      ))
+      .sort((left, right) => left.date.localeCompare(right.date));
+  }
+
+  async saveUserWaterEntry(entry: UserWaterEntry): Promise<UserWaterEntry> {
+    this.waterEntries.set(`${entry.userId}:${entry.date}`, entry);
+    return entry;
+  }
+
+  async listUserWaterEntries(
+    userId: string,
+    startDate: string,
+    endDate: string,
+  ): Promise<UserWaterEntry[]> {
+    return Array.from(this.waterEntries.values())
       .filter((entry) => (
         entry.userId === userId
         && entry.date >= startDate
@@ -1098,9 +1119,62 @@ test("GET /progress/users/:id/tracking and /exercise-logs return the persisted d
   });
 });
 
+test("GET/PUT /progress/users/:id/water returns the water target and persists clicked glasses", async () => {
+  await withRunningServer(async (baseUrl) => {
+    const requestHeaders = createAuthHeaders({
+      "Content-Type": "application/json",
+    });
+
+    const initialResponse = await fetch(
+      `${baseUrl}/progress/users/${sampleUser.id}/water?startDate=2026-03-02&endDate=2026-03-02`,
+      {
+        headers: createAuthHeaders(),
+      },
+    );
+    assert.equal(initialResponse.status, 200);
+
+    const initialPayload = await initialResponse.json();
+    assert.equal(initialPayload.length, 1);
+    assert.equal(initialPayload[0].targetGlasses, 4);
+    assert.equal(initialPayload[0].glassesCompleted, 0);
+
+    const updateResponse = await fetch(`${baseUrl}/progress/users/${sampleUser.id}/water`, {
+      method: "PUT",
+      headers: requestHeaders,
+      body: JSON.stringify({
+        date: "2026-03-02",
+        glassesCompleted: 3,
+      }),
+    });
+    assert.equal(updateResponse.status, 200);
+
+    const updatePayload = await updateResponse.json();
+    assert.equal(updatePayload.targetGlasses, 4);
+    assert.equal(updatePayload.glassesCompleted, 3);
+    assert.equal(updatePayload.completedLiters, 3);
+
+    const refreshedResponse = await fetch(
+      `${baseUrl}/progress/users/${sampleUser.id}/water?startDate=2026-03-02&endDate=2026-03-02`,
+      {
+        headers: createAuthHeaders(),
+      },
+    );
+    assert.equal(refreshedResponse.status, 200);
+
+    const refreshedPayload = await refreshedResponse.json();
+    assert.equal(refreshedPayload[0].glassesCompleted, 3);
+  });
+});
+
 test("PUT /progress/users/:id/meals/:mealSlot blocks future tracking dates", async () => {
   await withRunningServer(async (baseUrl) => {
-    const futureDate = new Date(Date.now() + (24 * 60 * 60 * 1000)).toISOString().slice(0, 10);
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const futureDate = [
+      tomorrow.getFullYear(),
+      String(tomorrow.getMonth() + 1).padStart(2, "0"),
+      String(tomorrow.getDate()).padStart(2, "0"),
+    ].join("-");
     const response = await fetch(
       `${baseUrl}/progress/users/${sampleUser.id}/meals/breakfast`,
       {

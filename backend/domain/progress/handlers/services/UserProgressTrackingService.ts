@@ -1,11 +1,14 @@
 import { NotFoundError, ValidationError } from "../../../share/Errors/AppErrors";
 import { RepositoryUser } from "../../../user/repositories/RepositoryUser";
+import { WaterRequirementService } from "../../../diet/handlers/services/WaterRequirementService";
 import { TrackMealProgressCommand } from "../../command/TrackMealProgressCommand";
 import { TrackWorkoutProgressCommand } from "../../command/TrackWorkoutProgressCommand";
+import { TrackWaterProgressCommand } from "../../command/TrackWaterProgressCommand";
 import { GetUserExerciseLogsQuery } from "../../queries/GetUserExerciseLogsQuery";
 import { GetUserProgressDayQuery } from "../../queries/GetUserProgressDayQuery";
 import { GetUserProgressSummaryQuery } from "../../queries/GetUserProgressSummaryQuery";
 import { GetUserTrackingEntriesQuery } from "../../queries/GetUserTrackingEntriesQuery";
+import { GetUserWaterEntriesQuery } from "../../queries/GetUserWaterEntriesQuery";
 import {
   DataUserCommand,
   DietPlan,
@@ -22,6 +25,7 @@ import {
   UserProgressSummary,
   UserProgressTotals,
   UserTrackingEntry,
+  UserWaterEntry,
   WorkoutPlan,
   WorkoutPlanDay,
 } from "../../../../src/types";
@@ -116,8 +120,16 @@ const assertDateRange = (startDate: string, endDate: string): void => {
   }
 };
 
+const getLocalDateKey = (value = new Date()): string => {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+};
+
 const assertNotFutureDate = (date: string): void => {
-  if (date > new Date().toISOString().slice(0, 10)) {
+  if (date > getLocalDateKey()) {
     throw new ValidationError("Future meals and workouts stay locked until that date is active.");
   }
 };
@@ -135,6 +147,26 @@ const getPlanDayName = (date: string): string => weekdayNames[getPlanDayNumber(d
 const getLastDayOfMonth = (year: number, month: number): number => (
   new Date(Date.UTC(year, month, 0)).getUTCDate()
 );
+
+const shiftDate = (date: string, offsetDays: number): string => {
+  const [yearText, monthText, dayText] = date.split("-");
+  const value = new Date(Date.UTC(Number(yearText), Number(monthText) - 1, Number(dayText)));
+  value.setUTCDate(value.getUTCDate() + offsetDays);
+
+  return value.toISOString().slice(0, 10);
+};
+
+const buildDateRange = (startDate: string, endDate: string): string[] => {
+  const dates: string[] = [];
+  let cursor = startDate;
+
+  while (cursor <= endDate) {
+    dates.push(cursor);
+    cursor = shiftDate(cursor, 1);
+  }
+
+  return dates;
+};
 
 const resolvePeriodRange = (
   period: UserProgressPeriod,
@@ -543,7 +575,10 @@ const buildBreakdown = (
 };
 
 export class UserProgressTrackingService {
-  constructor(private readonly repositoryUser: RepositoryUser) {}
+  constructor(
+    private readonly repositoryUser: RepositoryUser,
+    private readonly waterRequirementService = new WaterRequirementService(),
+  ) {}
 
   async trackMeal(command: TrackMealProgressCommand): Promise<UserProgressDay> {
     const date = normaliseDate(command.date);
@@ -720,6 +755,19 @@ export class UserProgressTrackingService {
     return this.repositoryUser.listUserTrackingEntries(query.userId, startDate, endDate);
   }
 
+  async getWater(query: GetUserWaterEntriesQuery): Promise<UserWaterEntry[]> {
+    const startDate = normaliseDate(query.startDate);
+    const endDate = normaliseDate(query.endDate);
+    assertDateRange(startDate, endDate);
+    const user = await this.getUser(query.userId);
+    const storedEntries = await this.repositoryUser.listUserWaterEntries(query.userId, startDate, endDate);
+    const storedByDate = new Map(storedEntries.map((entry) => [entry.date, entry]));
+
+    return buildDateRange(startDate, endDate).map((date) => (
+      this.resolveWaterEntry(user, date, storedByDate.get(date))
+    ));
+  }
+
   async getExerciseLogs(query: GetUserExerciseLogsQuery): Promise<UserExerciseLog[]> {
     const startDate = normaliseDate(query.startDate);
     const endDate = normaliseDate(query.endDate);
@@ -727,6 +775,30 @@ export class UserProgressTrackingService {
     await this.getUser(query.userId);
 
     return this.repositoryUser.listUserExerciseLogs(query.userId, startDate, endDate);
+  }
+
+  async trackWater(command: TrackWaterProgressCommand): Promise<UserWaterEntry> {
+    const date = normaliseDate(command.date);
+    assertNotFutureDate(date);
+    const user = await this.getUser(command.userId);
+    const target = this.waterRequirementService.calculate(user);
+    const normalizedGlassesCompleted = Number.isFinite(command.glassesCompleted)
+      ? Math.round(command.glassesCompleted)
+      : 0;
+    const glassesCompleted = Math.max(
+      0,
+      Math.min(target.targetGlasses, normalizedGlassesCompleted),
+    );
+
+    return this.repositoryUser.saveUserWaterEntry({
+      userId: command.userId,
+      date,
+      targetLiters: target.targetLiters,
+      targetGlasses: target.targetGlasses,
+      glassesCompleted,
+      litersPerGlass: target.litersPerGlass,
+      completedLiters: Math.round(glassesCompleted * target.litersPerGlass * 10) / 10,
+    });
   }
 
   private resolveWorkoutExerciseLogs(
@@ -846,5 +918,27 @@ export class UserProgressTrackingService {
     const progressDay = await this.repositoryUser.getUserProgressDay(user.id, date);
 
     return progressDay ?? createEmptyProgressDay(user, date);
+  }
+
+  private resolveWaterEntry(
+    user: DataUserCommand,
+    date: string,
+    storedEntry?: UserWaterEntry,
+  ): UserWaterEntry {
+    const target = this.waterRequirementService.calculate(user);
+    const glassesCompleted = Math.max(
+      0,
+      Math.min(target.targetGlasses, storedEntry?.glassesCompleted ?? 0),
+    );
+
+    return {
+      userId: user.id,
+      date,
+      targetLiters: target.targetLiters,
+      targetGlasses: target.targetGlasses,
+      glassesCompleted,
+      litersPerGlass: target.litersPerGlass,
+      completedLiters: Math.round(glassesCompleted * target.litersPerGlass * 10) / 10,
+    };
   }
 }

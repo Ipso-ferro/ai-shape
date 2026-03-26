@@ -234,6 +234,21 @@ CREATE TABLE IF NOT EXISTS user_exercise_logs (
     ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS user_water (
+  user_id CHAR(36) NOT NULL,
+  date DATE NOT NULL,
+  target_liters DECIMAL(4,1) NOT NULL DEFAULT 0,
+  target_glasses TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  glasses_completed TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  liters_per_glass DECIMAL(3,1) NOT NULL DEFAULT 1.0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, date),
+  CONSTRAINT fk_user_water_user
+    FOREIGN KEY (user_id) REFERENCES users(id)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS user_tracking_history (
   user_id CHAR(36) NOT NULL,
   tracked_on DATE NOT NULL,
@@ -271,6 +286,7 @@ Store array fields as JSON arrays, for example:
 - user_progress_tracking stores one row per user per calendar day with meal/workout completion timestamps and consumed/burned totals for daily, monthly, and yearly progress summaries
 - user_tracking stores one row per user per day with consumed kJ/macros, target kJ/macros, and burned kJ totals
 - user_exercise_logs stores per-exercise performed sets, reps, weight used, and calculated volume by user and date
+- user_water stores one row per user per day with the computed hydration target and how many one-liter glasses were completed
 - user_tracking_history stores daily kJ consumed and kJ burned by user and tracked day
 - shopping_market_single_food_list and shopping_market_recipes_list store the weekly market lists as JSON by user_id + plan_week and are expected to use `gr` for foods and `ml` for liquids
 */

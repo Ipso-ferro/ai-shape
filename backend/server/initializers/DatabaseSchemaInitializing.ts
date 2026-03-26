@@ -143,6 +143,23 @@ const createUserExerciseLogsTableStatement = `
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 `;
 
+const createUserWaterTableStatement = `
+  CREATE TABLE IF NOT EXISTS user_water (
+    user_id CHAR(36) NOT NULL,
+    date DATE NOT NULL,
+    target_liters DECIMAL(4,1) NOT NULL DEFAULT 0,
+    target_glasses TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    glasses_completed TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    liters_per_glass DECIMAL(3,1) NOT NULL DEFAULT 1.0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, date),
+    CONSTRAINT fk_user_water_user
+      FOREIGN KEY (user_id) REFERENCES users(id)
+      ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+`;
+
 const createUserTrackingHistoryTableStatement = `
   CREATE TABLE IF NOT EXISTS user_tracking_history (
     user_id CHAR(36) NOT NULL,
@@ -997,6 +1014,7 @@ export const initializeDatabaseSchema = async (
   await pool.query(createUserTrackingTableStatement());
   await pool.query(createUserTrackingHistoryTableStatement);
   await pool.query(createUserExerciseLogsTableStatement);
+  await pool.query(createUserWaterTableStatement);
   await migrateLegacyShoppingLists(pool);
   await ensurePlanRowStateColumns(pool);
 };

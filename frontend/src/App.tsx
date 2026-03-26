@@ -55,6 +55,7 @@ import type {
   UserExerciseLogInput,
   UserProfile,
   UserTrackingEntry,
+  UserWaterEntry,
   ViewKey,
   WeekDay,
   WorkoutPlan,
@@ -290,6 +291,13 @@ const mapExerciseDraftsToInputs = (logs: ExerciseLogDraft[]): UserExerciseLogInp
 
 const mapTrackingEntriesByDate = (entries: UserTrackingEntry[]): Record<string, UserTrackingEntry> => (
   entries.reduce<Record<string, UserTrackingEntry>>((accumulator, entry) => {
+    accumulator[entry.date] = entry;
+    return accumulator;
+  }, {})
+);
+
+const mapWaterEntriesByDate = (entries: UserWaterEntry[]): Record<string, UserWaterEntry> => (
+  entries.reduce<Record<string, UserWaterEntry>>((accumulator, entry) => {
     accumulator[entry.date] = entry;
     return accumulator;
   }, {})
@@ -689,6 +697,7 @@ function App() {
   const [yearSummary, setYearSummary] = useState<ProgressSummary | null>(null);
   const [weekProgress, setWeekProgress] = useState<Record<string, ProgressDay>>({});
   const [weekTracking, setWeekTracking] = useState<Record<string, UserTrackingEntry>>({});
+  const [weekWater, setWeekWater] = useState<Record<string, UserWaterEntry>>({});
   const [exerciseLogsByDate, setExerciseLogsByDate] = useState<Record<string, ExerciseLogDraft[]>>({});
   const [selectedDietDay, setSelectedDietDay] = useState(defaultSelectedDay);
   const [selectedDietType, setSelectedDietType] = useState<DietType>("single-food");
@@ -707,6 +716,7 @@ function App() {
   const [workoutGenerationStatus, setWorkoutGenerationStatus] = useState<SectionGenerationStatus | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [pendingMealKey, setPendingMealKey] = useState<string | null>(null);
+  const [pendingWaterDate, setPendingWaterDate] = useState<string | null>(null);
   const [pendingWorkoutDay, setPendingWorkoutDay] = useState<number | null>(null);
   const [pendingShoppingItemId, setPendingShoppingItemId] = useState<string | null>(null);
   const [recipePreview, setRecipePreview] = useState<{
@@ -918,6 +928,7 @@ function App() {
     setYearSummary(null);
     setWeekProgress({});
     setWeekTracking({});
+    setWeekWater({});
     setExerciseLogsByDate({});
     setSelectedDietType("single-food");
     setSelectedShoppingDietType("single-food");
@@ -926,6 +937,7 @@ function App() {
     setActiveView("dashboard");
     setRecipePreview(null);
     setPendingMealKey(null);
+    setPendingWaterDate(null);
     setPendingWorkoutDay(null);
     setPendingShoppingItemId(null);
     setDietGenerationStatus(null);
@@ -949,7 +961,7 @@ function App() {
 
     try {
       const freshUser = await api.getUser(userId);
-      const [singleFoodDiet, recipeDiet, freshWorkout, singleFoodShoppingCurrent, recipeShoppingCurrent, singleFoodShoppingNext, recipeShoppingNext, freshToday, freshMonth, freshYear, trackingEntries, exerciseLogs] = await Promise.all([
+      const [singleFoodDiet, recipeDiet, freshWorkout, singleFoodShoppingCurrent, recipeShoppingCurrent, singleFoodShoppingNext, recipeShoppingNext, freshToday, freshMonth, freshYear, trackingEntries, waterEntries, exerciseLogs] = await Promise.all([
         api.getDietPlan(userId, { dietType: "single-food" }),
         api.getDietPlan(userId, { dietType: "recipes" }),
         api.getWorkoutPlan(userId),
@@ -961,6 +973,7 @@ function App() {
         api.getProgressSummary(userId, "month", today),
         api.getProgressSummary(userId, "year", today),
         api.getTrackingEntries(userId, weekRangeStart, weekRangeEnd),
+        api.getWaterEntries(userId, weekRangeStart, weekRangeEnd),
         api.getExerciseLogs(userId, exerciseHistoryStart, today),
       ]);
       const activeDietType = resolveCurrentDietType(freshUser);
@@ -999,6 +1012,7 @@ function App() {
         setYearSummary(freshYear);
         setWeekProgress(nextWeekProgress);
         setWeekTracking(mapTrackingEntriesByDate(trackingEntries));
+        setWeekWater(mapWaterEntriesByDate(waterEntries));
         setExerciseLogsByDate(groupExerciseLogsByDate(exerciseLogs));
         setSelectedDietType(activeDietType);
         setSelectedShoppingDietType(activeDietType);
@@ -1022,7 +1036,7 @@ function App() {
   }
 
   async function refreshProgress(userId: string) {
-    const [freshToday, freshMonth, freshYear, progressDays, trackingEntries, exerciseLogs] = await Promise.all([
+    const [freshToday, freshMonth, freshYear, progressDays, trackingEntries, waterEntries, exerciseLogs] = await Promise.all([
       api.getProgressDay(userId, today),
       api.getProgressSummary(userId, "month", today),
       api.getProgressSummary(userId, "year", today),
@@ -1030,6 +1044,7 @@ function App() {
         weekDays.map(async (weekDay) => [weekDay.date, await api.getProgressDay(userId, weekDay.date)] as const),
       ),
       api.getTrackingEntries(userId, weekRangeStart, weekRangeEnd),
+      api.getWaterEntries(userId, weekRangeStart, weekRangeEnd),
       api.getExerciseLogs(userId, exerciseHistoryStart, today),
     ]);
 
@@ -1041,6 +1056,7 @@ function App() {
       setYearSummary(freshYear);
       setWeekProgress(nextWeekProgress);
       setWeekTracking(mapTrackingEntriesByDate(trackingEntries));
+      setWeekWater(mapWaterEntriesByDate(waterEntries));
       setExerciseLogsByDate(groupExerciseLogsByDate(exerciseLogs));
     });
   }
@@ -1420,6 +1436,44 @@ function App() {
     }
   }
 
+  async function saveWater(date: string, glassesCompleted: number) {
+    if (!sessionUserId) {
+      return;
+    }
+
+    const previousEntry = weekWater[date];
+
+    if (!previousEntry) {
+      return;
+    }
+
+    setWeekWater((current) => ({
+      ...current,
+      [date]: {
+        ...previousEntry,
+        glassesCompleted,
+        completedLiters: Math.round(glassesCompleted * previousEntry.litersPerGlass * 10) / 10,
+      },
+    }));
+    setPendingWaterDate(date);
+
+    try {
+      const result = await api.saveWater(sessionUserId, date, glassesCompleted);
+      setWeekWater((current) => ({
+        ...current,
+        [date]: result,
+      }));
+    } catch (error) {
+      setWeekWater((current) => ({
+        ...current,
+        [date]: previousEntry,
+      }));
+      setErrorMessage(error instanceof Error ? error.message : "Unable to update water progress");
+    } finally {
+      setPendingWaterDate((current) => (current === date ? null : current));
+    }
+  }
+
   async function toggleShoppingItem(item: ShoppingItem, checked: boolean) {
     if (!sessionUserId || !item.id) {
       return;
@@ -1692,12 +1746,15 @@ function App() {
                 })}
                 weekDays={weekDays}
                 weekProgress={weekProgress}
+                weekWater={weekWater}
                 pendingMealKey={pendingMealKey}
+                pendingWaterDate={pendingWaterDate}
                 energyUnitPreference={user.energyUnitPreference}
                 mealTargetCount={user.numberOfMeals}
                 hasConfiguredSupplements={user.supplementation.length > 0}
                 onGenerateMissingDietType={generateMissingDietMode}
                 generationStatus={dietGenerationStatus}
+                onSaveWater={saveWater}
               />
             ) : null}
 
@@ -2209,11 +2266,11 @@ function StrengthPerformancePanel(props: {
         <div className="panel-header">
           <div>
             <span className="eyebrow">Strength profile</span>
-            <h3>Estimated 1RM comparison</h3>
+            <h3>Strength comparison</h3>
           </div>
         </div>
         <p className="empty-line">
-          Finish workouts with weight used to unlock estimated 1RM comparison, progress, and volume views.
+          Finish workouts with weight used to unlock strength comparison, progress, and volume views.
         </p>
       </>
     );
@@ -2592,7 +2649,7 @@ function StrengthPerformancePanel(props: {
       <div className="panel-header">
         <div>
           <span className="eyebrow">Strength profile</span>
-          <h3>Estimated 1RM comparison</h3>
+          <h3>Strength comparison</h3>
           <p className="muted-line">Based on logged weight and reps from completed workouts.</p>
         </div>
       </div>
@@ -2636,12 +2693,15 @@ function DietView(props: {
   onOpenRecipe: (entry: DietPlanEntry) => void;
   weekDays: WeekDay[];
   weekProgress: Record<string, ProgressDay>;
+  weekWater: Record<string, UserWaterEntry>;
   pendingMealKey: string | null;
+  pendingWaterDate: string | null;
   energyUnitPreference: EnergyUnit;
   mealTargetCount: number;
   hasConfiguredSupplements: boolean;
   onGenerateMissingDietType: (dietType: DietType) => Promise<void>;
   generationStatus: SectionGenerationStatus | null;
+  onSaveWater: (date: string, glassesCompleted: number) => Promise<void>;
 }) {
   const plan = props.plans[props.selectedDietType];
   const isGeneratingDiet = props.generationStatus !== null;
@@ -2696,8 +2756,13 @@ function DietView(props: {
   const activeDay = plan.days.find((day) => day.day === props.selectedDay) ?? plan.days[0];
   const activeDate = props.weekDays.find((item) => item.dayNumber === activeDay.day)?.date ?? todayKey();
   const activeProgress = props.weekProgress[activeDate];
+  const activeWater = props.weekWater[activeDate];
   const visibleMeals = getRenderableMealConfig(activeDay);
   const isFutureDay = activeDate > todayKey();
+  const targetGlasses = activeWater?.targetGlasses ?? 0;
+  const completedGlasses = activeWater?.glassesCompleted ?? 0;
+  const completedLiters = activeWater?.completedLiters ?? 0;
+  const waterTargetLiters = activeWater?.targetLiters ?? 0;
 
   return (
     <div className="stack-page">
@@ -2821,6 +2886,47 @@ function DietView(props: {
             </article>
           );
         })}
+      </section>
+
+      <section className="panel water-panel">
+        <div className="panel-header split-end">
+          <div>
+            <span className="eyebrow">Water</span>
+            <h3>{targetGlasses} glass{targetGlasses === 1 ? "" : "es"} target</h3>
+            <p className="muted-line">
+              {completedLiters} / {waterTargetLiters} L completed
+            </p>
+          </div>
+          <div className="water-panel-copy">
+            <span>Minimal requirement for this day</span>
+            {isFutureDay ? <span>Locked until this day is active</span> : null}
+          </div>
+        </div>
+
+        <div className="water-glass-grid">
+          {Array.from({ length: targetGlasses }, (_, index) => {
+            const filled = index < completedGlasses;
+            const nextCompleted = completedGlasses > index ? index : index + 1;
+
+            return (
+              <button
+                key={`${activeDate}-water-${index + 1}`}
+                type="button"
+                className={filled ? "water-glass-button filled" : "water-glass-button"}
+                onClick={() => props.onSaveWater(activeDate, nextCompleted)}
+                disabled={props.pendingWaterDate === activeDate || isFutureDay}
+                aria-label={`Glass ${index + 1} of ${targetGlasses}`}
+              >
+                <img
+                  src={filled ? "/water-glass-full.svg" : "/water-glass-empty.svg"}
+                  alt=""
+                  aria-hidden="true"
+                />
+                <span>{index + 1}</span>
+              </button>
+            );
+          })}
+        </div>
       </section>
     </div>
   );

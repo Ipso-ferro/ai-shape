@@ -1233,6 +1233,58 @@ label > span {
   flex: 0 0 auto;
 }
 
+.water-panel {
+  display: grid;
+  gap: 1rem;
+}
+
+.water-panel-copy {
+  display: grid;
+  justify-items: end;
+  gap: 0.25rem;
+  color: var(--app-text-secondary);
+  text-align: right;
+}
+
+.water-glass-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.water-glass-button {
+  display: grid;
+  justify-items: center;
+  gap: 0.45rem;
+  padding: 0.75rem 0.65rem 0.55rem;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--app-border);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: var(--shadow-xs);
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.water-glass-button img {
+  width: 42px;
+  height: 58px;
+  display: block;
+}
+
+.water-glass-button span {
+  color: var(--app-text-secondary);
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.water-glass-button.filled {
+  border-color: rgba(47, 127, 109, 0.24);
+  background: rgba(169, 230, 223, 0.18);
+}
+
+.water-glass-button:hover {
+  transform: translateY(-1px);
+}
+
 .meals-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1524,6 +1576,11 @@ label > span {
   .panel-header-aside {
     width: 100%;
     justify-items: stretch;
+  }
+
+  .water-panel-copy {
+    justify-items: start;
+    text-align: left;
   }
 
   .strength-detail-grid,

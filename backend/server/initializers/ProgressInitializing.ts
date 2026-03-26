@@ -18,9 +18,11 @@ export const initializeProgressRoutes = (
   router.get("/users/:id/day", controller.getDay);
   router.get("/users/:id/summary", controller.getSummary);
   router.get("/users/:id/tracking", controller.getTracking);
+  router.get("/users/:id/water", controller.getWater);
   router.get("/users/:id/exercise-logs", controller.getExerciseLogs);
   router.put("/users/:id/meals/:mealSlot", controller.trackMeal);
   router.put("/users/:id/workout", controller.trackWorkout);
+  router.put("/users/:id/water", controller.trackWater);
 
   return router;
 };

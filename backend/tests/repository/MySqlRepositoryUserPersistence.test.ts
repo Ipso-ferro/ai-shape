@@ -10,6 +10,7 @@ import {
   ShoppingList,
   UserExerciseLogInput,
   UserTrackingEntry,
+  UserWaterEntry,
   WorkoutPlan,
 } from "../../src/types";
 
@@ -52,6 +53,14 @@ interface ExerciseLogStateRow extends RowDataPacket {
   reps_completed: number;
   weight_used: string | number;
   volume: string | number;
+}
+
+interface WaterStateRow extends RowDataPacket {
+  date: string;
+  target_liters: string | number;
+  target_glasses: number;
+  glasses_completed: number;
+  liters_per_glass: string | number;
 }
 
 const repository = new MySqlRepositoryUser(mysqlPool);
@@ -444,6 +453,18 @@ const getExerciseLogRows = async (
   );
 
   return rows;
+};
+
+const getWaterRowState = async (
+  userId: string,
+  date: string,
+): Promise<WaterStateRow | null> => {
+  const [rows] = await mysqlPool.execute<WaterStateRow[]>(
+    "SELECT date, target_liters, target_glasses, glasses_completed, liters_per_glass FROM user_water WHERE user_id = ? AND date = ? LIMIT 1",
+    [userId, date],
+  );
+
+  return rows[0] ?? null;
 };
 
 const parseJsonColumn = (value: string | Record<string, unknown>): Record<string, unknown> => (
@@ -896,6 +917,48 @@ test("daily tracking entries and exercise logs persist, update, and clear", asyn
   await repository.replaceUserExerciseLogs(userId, "2026-03-02", []);
   const clearedExerciseLogRows = await getExerciseLogRows(userId, "2026-03-02");
   assert.equal(clearedExerciseLogRows.length, 0);
+});
+
+test("daily water entries persist and list back by date range", async (t) => {
+  const userId = randomUUID();
+  t.after(async () => {
+    await mysqlPool.execute<ResultSetHeader>("DELETE FROM users WHERE id = ?", [userId]);
+  });
+
+  await createUser(userId);
+
+  const waterEntry: UserWaterEntry = {
+    userId,
+    date: "2026-03-02",
+    targetLiters: 3.9,
+    targetGlasses: 4,
+    glassesCompleted: 3,
+    litersPerGlass: 1,
+    completedLiters: 3,
+  };
+
+  await repository.saveUserWaterEntry(waterEntry);
+  await repository.saveUserWaterEntry({
+    ...waterEntry,
+    glassesCompleted: 4,
+    completedLiters: 4,
+  });
+
+  const waterRow = await getWaterRowState(userId, "2026-03-02");
+  assert.equal(Number(waterRow?.target_liters), 3.9);
+  assert.equal(waterRow?.target_glasses, 4);
+  assert.equal(waterRow?.glasses_completed, 4);
+  assert.equal(Number(waterRow?.liters_per_glass), 1);
+
+  const storedWaterEntries = await repository.listUserWaterEntries(
+    userId,
+    "2026-03-01",
+    "2026-03-07",
+  );
+  assert.equal(storedWaterEntries.length, 1);
+  assert.equal(storedWaterEntries[0].targetGlasses, 4);
+  assert.equal(storedWaterEntries[0].glassesCompleted, 4);
+  assert.equal(storedWaterEntries[0].completedLiters, 4);
 });
 
 test("shopping lists persist independently by diet type and week", async (t) => {

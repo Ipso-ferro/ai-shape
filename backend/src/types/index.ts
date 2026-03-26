@@ -230,6 +230,16 @@ export interface UserTrackingEntry {
   kjsBurnedTarget: number;
 }
 
+export interface UserWaterEntry {
+  userId: string;
+  date: string;
+  targetLiters: number;
+  targetGlasses: number;
+  glassesCompleted: number;
+  litersPerGlass: number;
+  completedLiters: number;
+}
+
 export interface UserExerciseLogInput {
   exerciseName: string;
   setsCompleted: number;

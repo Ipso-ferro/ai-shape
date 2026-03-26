@@ -12,6 +12,7 @@ import {
   UserExerciseLog,
   UserTrackingEntry,
   UserExerciseLogInput,
+  UserWaterEntry,
   WorkoutPlan,
   DietType,
   PlanWeek,
@@ -71,6 +72,12 @@ export interface RepositoryUser {
     startDate: string,
     endDate: string,
   ): Promise<UserTrackingEntry[]>;
+  saveUserWaterEntry(entry: UserWaterEntry): Promise<UserWaterEntry>;
+  listUserWaterEntries(
+    userId: string,
+    startDate: string,
+    endDate: string,
+  ): Promise<UserWaterEntry[]>;
   replaceUserExerciseLogs(
     userId: string,
     date: string,
