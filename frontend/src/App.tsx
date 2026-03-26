@@ -1794,85 +1794,37 @@ function DashboardView(props: {
 }) {
   const {
     user,
-    todayProgress,
     weekDays,
     weekProgress,
     weekTracking,
     exerciseLogsByDate,
     dietPlan,
-    workoutPlan,
-    shoppingList,
     energyUnitPreference,
   } = props;
-  const consumed = todayProgress?.totals.kilojoulesConsumed ?? 0;
-  const burned = todayProgress?.totals.kilojoulesBurned ?? 0;
-  const target = user.kilojoulesTarget ?? 0;
-  const net = todayProgress?.totals.netKilojoules ?? 0;
-  const delta = todayProgress?.totals.kilojouleDeltaFromTarget ?? 0;
 
   return (
     <div className="view-grid">
-      <section className="panel span-2">
-        <div className="panel-header">
-          <div>
-            <span className="eyebrow">Today</span>
-            <h3>{humanDate(todayKey())}</h3>
-          </div>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={props.onGenerate}
-            disabled={props.isRegeneratingPlan}
-          >
-            <RefreshCcw02 className="button-icon" />
-            {props.isRegeneratingPlan ? "Refreshing plan..." : "Refresh week"}
-          </button>
-        </div>
-        <div className="stats-grid">
-          <MetricCard title="Consumed" value={formatEnergyValue(consumed, energyUnitPreference)} detail={`${progressPercent(consumed, target).toFixed(0)}% of target`} />
-          <MetricCard title="Burned" value={formatEnergyValue(burned, energyUnitPreference)} detail={formatEnergyValue(todayProgress?.totals.kilojoulesBurned ?? 0, "kj")} />
-          <MetricCard title="Net" value={formatEnergyValue(net, energyUnitPreference)} detail={`${formatEnergyValue(delta, energyUnitPreference)} vs target`} />
-          <MetricCard
-            title="Market plan"
-            value={`${shoppingList?.metadata.totalItems ?? 0} items`}
-            detail={shoppingList?.metadata.recommendedStore
-              ? `${shoppingList.metadata.recommendedStore} looks cheapest`
-              : `${shoppingList?.metadata.daysCovered ?? 0} day coverage`}
-          />
-        </div>
-
-        <div className="progress-rail">
-          <div className="progress-copy">
-            <strong>Energy pace</strong>
-            <span>Consumed versus target</span>
-          </div>
-          <div className="bar-shell">
-            <span className="bar-fill" style={{ width: `${progressPercent(consumed, target)}%` }} />
-          </div>
-        </div>
-      </section>
-
-      <section className="panel">
-        <div className="panel-header">
-          <div>
-            <span className="eyebrow">Week pulse</span>
-            <h3>This week</h3>
-          </div>
-        </div>
-        <div className="mini-list">
+      <section className="panel span-full">
+        <div className="week-pulse-grid">
           {weekDays.map((weekDay) => {
             const progress = weekProgress[weekDay.date];
+            const tracking = weekTracking[weekDay.date];
+            const dietDay = dietPlan?.days.find((day) => day.day === weekDay.dayNumber) ?? null;
+            const targets = resolveDietDayTargets(dietDay);
+            const target = tracking?.kjsTarget ?? targets.kjsTarget;
+            const consumed = tracking?.kjsConsumed ?? 0;
+            const withinTargetWindow = target > 0
+              && consumed >= target * 0.8
+              && consumed <= target * 1.2;
+            const pulsePassed = withinTargetWindow && (progress?.workout.completed ?? false);
+
             return (
-              <div key={weekDay.date} className="mini-row">
-                <div>
-                  <strong>{weekDay.shortLabel}</strong>
-                  <span>{humanDate(weekDay.date)}</span>
-                </div>
-                <div className="mini-row-values">
-                  <span>{progress?.totals.mealsCompleted ?? 0}/{user.numberOfMeals} meals</span>
-                  <span>{progress?.workout.completed ? "Workout done" : "Workout open"}</span>
-                </div>
-              </div>
+              <article key={weekDay.date} className="week-pulse-card">
+                <strong>{weekDay.shortLabel.toLowerCase()}</strong>
+                <span className={pulsePassed ? "week-pulse-mark pass" : "week-pulse-mark fail"}>
+                  {pulsePassed ? "✓" : "×"}
+                </span>
+              </article>
             );
           })}
         </div>
@@ -1880,6 +1832,7 @@ function DashboardView(props: {
 
       <section className="panel span-full">
         <DailyEnergyChart
+          user={user}
           weekDays={weekDays}
           weekTracking={weekTracking}
           dietPlan={dietPlan}
@@ -1896,107 +1849,144 @@ function DashboardView(props: {
       </section>
 
       <section className="panel span-full">
-        <ProgressiveOverloadChart
+        <StrengthPerformancePanel
           exerciseLogsByDate={exerciseLogsByDate}
-          workoutPlan={workoutPlan}
         />
-      </section>
-
-      <section className="panel">
-        <div className="panel-header">
-          <div>
-            <span className="eyebrow">Recomposition chart</span>
-            <h3>Body fat vs lean mass</h3>
-          </div>
-        </div>
-        <p className="empty-line">
-          This chart needs real body-metric check-ins like body weight and body-fat percentage.
-        </p>
       </section>
     </div>
   );
 }
 
 function DailyEnergyChart(props: {
+  user: UserProfile;
   weekDays: WeekDay[];
   weekTracking: Record<string, UserTrackingEntry>;
   dietPlan: DietPlan | null;
   energyUnitPreference: EnergyUnit;
 }) {
-  const chartWidth = 680;
-  const chartHeight = 250;
-  const paddingX = 28;
-  const paddingTop = 18;
-  const paddingBottom = 42;
-  const columnWidth = (chartWidth - (paddingX * 2)) / Math.max(props.weekDays.length, 1);
-  const maxValue = Math.max(
-    1,
-    ...props.weekDays.flatMap((weekDay) => {
-      const tracking = props.weekTracking[weekDay.date];
-      const dietDay = props.dietPlan?.days.find((day) => day.day === weekDay.dayNumber) ?? null;
-      const targets = resolveDietDayTargets(dietDay);
+  const chartWidth = 720;
+  const chartHeight = 280;
+  const paddingX = 42;
+  const paddingTop = 24;
+  const paddingBottom = 44;
+  const usableHeight = chartHeight - paddingTop - paddingBottom;
+  const usableWidth = chartWidth - (paddingX * 2);
+  const bodyMassKilojouleFactor = 7700 * kilojoulesPerCalorie;
+  const energyUnitLabel = props.energyUnitPreference === "cal" ? "kcal" : "kJ";
+  const series = props.weekDays.map((weekDay) => {
+    const tracking = props.weekTracking[weekDay.date];
+    const dietDay = props.dietPlan?.days.find((day) => day.day === weekDay.dayNumber) ?? null;
+    const targets = resolveDietDayTargets(dietDay);
 
-      return [tracking?.kjsConsumed ?? 0, tracking?.kjsTarget ?? targets.kjsTarget];
-    }),
+    return {
+      ...weekDay,
+      consumedKjs: tracking?.kjsConsumed ?? 0,
+      targetKjs: tracking?.kjsTarget ?? targets.kjsTarget,
+    };
+  });
+  let cumulativeDelta = 0;
+  const projectedWeights = series.map((day) => {
+    cumulativeDelta += day.consumedKjs - day.targetKjs;
+    return Math.round((props.user.weight + (cumulativeDelta / bodyMassKilojouleFactor)) * 10) / 10;
+  });
+  const chartSeries = series.map((day) => ({
+    ...day,
+    consumed: props.energyUnitPreference === "cal"
+      ? toCalories(day.consumedKjs)
+      : day.consumedKjs,
+    target: props.energyUnitPreference === "cal"
+      ? toCalories(day.targetKjs)
+      : day.targetKjs,
+  }));
+  const maxEnergy = Math.max(1, ...chartSeries.flatMap((day) => [day.consumed, day.target]));
+  const weightMin = Math.min(props.user.weight, ...projectedWeights);
+  const weightMax = Math.max(props.user.weight, ...projectedWeights);
+  const weightRange = Math.max(weightMax - weightMin, 0.6);
+
+  const resolveEnergyY = (value: number): number => (
+    paddingTop + ((maxEnergy - value) / maxEnergy) * usableHeight
   );
 
-  const resolveHeight = (value: number): number => (
-    ((chartHeight - paddingTop - paddingBottom) * value) / maxValue
+  const resolveWeightY = (value: number): number => (
+    paddingTop + ((weightMax + 0.3 - value) / (weightRange + 0.6)) * usableHeight
   );
+
+  const consumedPoints = chartSeries.map((day, index) => {
+    const x = paddingX + ((usableWidth / Math.max(chartSeries.length - 1, 1)) * index);
+    return `${x},${resolveEnergyY(day.consumed)}`;
+  }).join(" ");
+  const targetPoints = chartSeries.map((day, index) => {
+    const x = paddingX + ((usableWidth / Math.max(chartSeries.length - 1, 1)) * index);
+    return `${x},${resolveEnergyY(day.target)}`;
+  }).join(" ");
+  const projectedWeightPoints = projectedWeights.map((value, index) => {
+    const x = paddingX + ((usableWidth / Math.max(projectedWeights.length - 1, 1)) * index);
+    return `${x},${resolveWeightY(value)}`;
+  }).join(" ");
+  const averageConsumed = series.reduce((sum, day) => sum + day.consumedKjs, 0) / Math.max(series.length, 1);
+  const averageTarget = series.reduce((sum, day) => sum + day.targetKjs, 0) / Math.max(series.length, 1);
+  const projectedShift = projectedWeights[projectedWeights.length - 1] - projectedWeights[0];
 
   return (
     <>
       <div className="panel-header">
         <div>
           <span className="eyebrow">Daily adherence</span>
-          <h3>Calories vs target</h3>
-          <p className="muted-line">Each day compares consumed energy against the planned food target.</p>
+          <h3>{props.energyUnitPreference === "cal" ? "Calories vs target" : "Kilojoules vs target"}</h3>
+          <p className="muted-line">Consumed energy, planned target, and projected body-mass drift from this intake trend.</p>
         </div>
       </div>
 
       <div className="chart-legend">
-        <span className="chart-legend-item energy-target">Target</span>
         <span className="chart-legend-item energy-consumed">Consumed</span>
+        <span className="chart-legend-item energy-target">Target</span>
+        <span className="chart-legend-item" style={{ ["--legend-color" as string]: "#b55d32" }}>Projected weight</span>
       </div>
 
       <div className="body-chart-shell">
-        <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="body-chart" role="img" aria-label="Daily calories versus target">
-          {props.weekDays.map((weekDay, index) => {
-            const tracking = props.weekTracking[weekDay.date];
-            const dietDay = props.dietPlan?.days.find((day) => day.day === weekDay.dayNumber) ?? null;
-            const targets = resolveDietDayTargets(dietDay);
-            const consumed = tracking?.kjsConsumed ?? 0;
-            const target = tracking?.kjsTarget ?? targets.kjsTarget;
-            const targetHeight = resolveHeight(target);
-            const consumedHeight = resolveHeight(consumed);
-            const x = paddingX + (index * columnWidth) + (columnWidth * 0.18);
-            const width = columnWidth * 0.64;
+        <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="body-chart" role="img" aria-label="Calories versus target and projected weight">
+          {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+            const y = paddingTop + (usableHeight * ratio);
+            const energyStep = props.energyUnitPreference === "cal" ? 50 : 200;
+            const energyValue = Math.round((maxEnergy - (maxEnergy * ratio)) / energyStep) * energyStep;
+            const weightValue = weightMax + 0.3 - ((weightRange + 0.6) * ratio);
 
             return (
-              <g key={weekDay.date}>
-                <rect
-                  x={x}
-                  y={chartHeight - paddingBottom - targetHeight}
-                  width={width}
-                  height={targetHeight}
-                  rx={12}
-                  className="energy-target-bar"
-                />
-                <rect
-                  x={x}
-                  y={chartHeight - paddingBottom - consumedHeight}
-                  width={width}
-                  height={consumedHeight}
-                  rx={12}
-                  className="energy-consumed-bar"
-                />
-                <text
-                  x={x + (width / 2)}
-                  y={chartHeight - 12}
-                  textAnchor="middle"
-                  className="body-chart-axis"
-                >
-                  {weekDay.shortLabel}
+              <g key={ratio}>
+                <line x1={paddingX} y1={y} x2={chartWidth - paddingX} y2={y} className="body-chart-grid" />
+                <text x={8} y={y + 4} className="body-chart-axis">{`${formatNumber(Math.max(energyValue, 0))} ${energyUnitLabel}`}</text>
+                <text x={chartWidth - 34} y={y + 4} textAnchor="end" className="body-chart-axis">
+                  {weightValue.toFixed(1)} kg
+                </text>
+              </g>
+            );
+          })}
+
+          <polyline
+            points={targetPoints}
+            className="body-chart-line"
+            style={{ stroke: "#2f7f6d", strokeDasharray: "10 8" }}
+          />
+          <polyline
+            points={consumedPoints}
+            className="body-chart-line"
+            style={{ stroke: "#ef7f45" }}
+          />
+          <polyline
+            points={projectedWeightPoints}
+            className="body-chart-line"
+            style={{ stroke: "#b55d32" }}
+          />
+
+          {chartSeries.map((day, index) => {
+            const x = paddingX + ((usableWidth / Math.max(chartSeries.length - 1, 1)) * index);
+
+            return (
+              <g key={day.date}>
+                <circle cx={x} cy={resolveEnergyY(day.consumed)} r={4.5} style={{ fill: "#ef7f45" }} />
+                <circle cx={x} cy={resolveWeightY(projectedWeights[index])} r={4.5} style={{ fill: "#b55d32" }} />
+                <text x={x} y={chartHeight - 12} textAnchor="middle" className="body-chart-axis">
+                  {day.shortLabel}
                 </text>
               </g>
             );
@@ -2005,23 +1995,21 @@ function DailyEnergyChart(props: {
       </div>
 
       <div className="stats-grid composition-stats">
-        {props.weekDays.map((weekDay) => {
-          const tracking = props.weekTracking[weekDay.date];
-          const dietDay = props.dietPlan?.days.find((day) => day.day === weekDay.dayNumber) ?? null;
-          const targets = resolveDietDayTargets(dietDay);
-          const consumed = tracking?.kjsConsumed ?? 0;
-          const target = tracking?.kjsTarget ?? targets.kjsTarget;
-          const adherence = target > 0 ? Math.round((consumed / target) * 100) : 0;
-
-          return (
-            <MetricCard
-              key={weekDay.date}
-              title={weekDay.shortLabel}
-              value={`${adherence}%`}
-              detail={`${formatEnergyValue(consumed, props.energyUnitPreference)} / ${formatEnergyValue(target, props.energyUnitPreference)}`}
-            />
-          );
-        })}
+        <MetricCard
+          title="Avg consumed"
+          value={formatEnergyValue(Math.round(averageConsumed), props.energyUnitPreference)}
+          detail="Current week intake"
+        />
+        <MetricCard
+          title="Avg target"
+          value={formatEnergyValue(Math.round(averageTarget), props.energyUnitPreference)}
+          detail="Planned diet target"
+        />
+        <MetricCard
+          title="Projected shift"
+          value={`${projectedShift > 0 ? "+" : ""}${projectedShift.toFixed(1)} kg`}
+          detail="Trend from current intake"
+        />
       </div>
     </>
   );
@@ -2032,190 +2020,603 @@ function MacroBreakdownChart(props: {
   weekTracking: Record<string, UserTrackingEntry>;
   dietPlan: DietPlan | null;
 }) {
+  const daysWithMacros = props.weekDays.map((weekDay) => {
+    const tracking = props.weekTracking[weekDay.date];
+    const dietDay = props.dietPlan?.days.find((day) => day.day === weekDay.dayNumber) ?? null;
+    const targets = resolveDietDayTargets(dietDay).macrosTarget;
+    return {
+      consumed: tracking?.macrosConsumed ?? createEmptyMacroSnapshot(),
+      target: tracking?.macrosTarget ?? targets,
+    };
+  });
+  const divisor = Math.max(daysWithMacros.length, 1);
+  const averageProtein = Math.round(daysWithMacros.reduce((sum, item) => sum + item.consumed.proteinGrams, 0) / divisor);
+  const averageCarbs = Math.round(daysWithMacros.reduce((sum, item) => sum + item.consumed.carbsGrams, 0) / divisor);
+  const averageFats = Math.round(daysWithMacros.reduce((sum, item) => sum + item.consumed.fatsGrams, 0) / divisor);
+  const averageProteinTarget = Math.round(daysWithMacros.reduce((sum, item) => sum + item.target.proteinGrams, 0) / divisor);
+  const averageCarbsTarget = Math.round(daysWithMacros.reduce((sum, item) => sum + item.target.carbsGrams, 0) / divisor);
+  const averageFatsTarget = Math.round(daysWithMacros.reduce((sum, item) => sum + item.target.fatsGrams, 0) / divisor);
+
   return (
     <>
       <div className="panel-header">
         <div>
           <span className="eyebrow">Macro balance</span>
-          <h3>Protein, carbs, and fats</h3>
-          <p className="muted-line">Tracked macro intake against the planned day structure.</p>
+          <h3>Average macros</h3>
+          <p className="muted-line">Current week averages against the planned macro targets.</p>
         </div>
       </div>
 
-      <div className="chart-legend">
-        <span className="chart-legend-item macro-protein">Protein</span>
-        <span className="chart-legend-item macro-carbs">Carbs</span>
-        <span className="chart-legend-item macro-fats">Fats</span>
-      </div>
-
-      <div className="macro-breakdown-list">
-        {props.weekDays.map((weekDay) => {
-          const tracking = props.weekTracking[weekDay.date];
-          const dietDay = props.dietPlan?.days.find((day) => day.day === weekDay.dayNumber) ?? null;
-          const targets = resolveDietDayTargets(dietDay);
-          const consumed = tracking?.macrosConsumed ?? createEmptyMacroSnapshot();
-          const totalConsumed = Math.max(
-            consumed.proteinGrams + consumed.carbsGrams + consumed.fatsGrams,
-            1,
-          );
-          const totalTarget = Math.max(
-            targets.macrosTarget.proteinGrams + targets.macrosTarget.carbsGrams + targets.macrosTarget.fatsGrams,
-            0,
-          );
-
-          return (
-            <article key={weekDay.date} className="macro-breakdown-row">
-              <div>
-                <strong>{weekDay.label}</strong>
-                <span>{totalConsumed}g consumed{totalTarget > 0 ? ` / ${totalTarget}g target` : ""}</span>
-              </div>
-              <div className="macro-stack" aria-label={`${weekDay.label} macro balance`}>
-                <span className="macro-segment protein" style={{ width: `${(consumed.proteinGrams / totalConsumed) * 100}%` }} />
-                <span className="macro-segment carbs" style={{ width: `${(consumed.carbsGrams / totalConsumed) * 100}%` }} />
-                <span className="macro-segment fats" style={{ width: `${(consumed.fatsGrams / totalConsumed) * 100}%` }} />
-              </div>
-              <div className="macro-breakdown-values">
-                <span>P {consumed.proteinGrams}g</span>
-                <span>C {consumed.carbsGrams}g</span>
-                <span>F {consumed.fatsGrams}g</span>
-              </div>
-            </article>
-          );
-        })}
+      <div className="stats-grid composition-stats">
+        <MetricCard
+          title="Avg Protein"
+          value={`${averageProtein}g`}
+          detail={`${averageProteinTarget}g target`}
+        />
+        <MetricCard
+          title="Avg Carbs"
+          value={`${averageCarbs}g`}
+          detail={`${averageCarbsTarget}g target`}
+        />
+        <MetricCard
+          title="Avg Fat"
+          value={`${averageFats}g`}
+          detail={`${averageFatsTarget}g target`}
+        />
       </div>
     </>
   );
 }
 
-function ProgressiveOverloadChart(props: {
-  exerciseLogsByDate: Record<string, ExerciseLogDraft[]>;
-  workoutPlan: WorkoutPlan | null;
-}) {
-  const allLogs = Object.values(props.exerciseLogsByDate).flat();
-  const volumeByExercise = new Map<string, number>();
+type StrengthViewMode = "progress" | "compare" | "volume";
 
-  for (const log of allLogs) {
-    volumeByExercise.set(log.exerciseName, (volumeByExercise.get(log.exerciseName) ?? 0) + log.volume);
+interface StrengthHistoryPoint {
+  date: string;
+  oneRepMax: number;
+  volume: number;
+  setsCompleted: number;
+  repsCompleted: number;
+  weightUsed: number;
+}
+
+interface StrengthSeries {
+  exerciseName: string;
+  color: string;
+  points: StrengthHistoryPoint[];
+}
+
+interface WeeklyStrengthVolumeBucket {
+  label: string;
+  volumes: Array<{
+    exerciseName: string;
+    color: string;
+    volume: number;
+  }>;
+  totalVolume: number;
+}
+
+const strengthPalette = ["#4a8ed9", "#2ba983", "#d0871e", "#db5b8c", "#8676dc"];
+
+const formatStrengthValue = (value: number): string => (
+  new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: Number.isInteger(value) ? 0 : 1,
+    maximumFractionDigits: 1,
+  }).format(value)
+);
+
+const dateKeyFromValue = (value: Date): string => {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+};
+
+const resolveWeekBucketKey = (date: string): string => {
+  const value = new Date(`${date}T12:00:00`);
+  const weekday = value.getDay() === 0 ? 7 : value.getDay();
+  value.setDate(value.getDate() - weekday + 1);
+
+  return dateKeyFromValue(value);
+};
+
+const estimateOneRepMax = (weightUsed: number, repsCompleted: number): number => (
+  Math.round(weightUsed * (1 + (repsCompleted / 30)) * 10) / 10
+);
+
+const buildStrengthSeries = (
+  exerciseLogsByDate: Record<string, ExerciseLogDraft[]>,
+) : StrengthSeries[] => {
+  const grouped = new Map<string, Map<string, StrengthHistoryPoint>>();
+
+  for (const log of Object.values(exerciseLogsByDate).flat()) {
+    if (log.weightUsed <= 0 || log.repsCompleted <= 0 || log.setsCompleted <= 0) {
+      continue;
+    }
+
+    const pointsByDate = grouped.get(log.exerciseName) ?? new Map<string, StrengthHistoryPoint>();
+    const currentPoint = pointsByDate.get(log.date);
+    const nextOneRepMax = estimateOneRepMax(log.weightUsed, log.repsCompleted);
+
+    pointsByDate.set(log.date, currentPoint ? {
+      ...currentPoint,
+      oneRepMax: Math.max(currentPoint.oneRepMax, nextOneRepMax),
+      volume: currentPoint.volume + log.volume,
+      setsCompleted: currentPoint.setsCompleted + log.setsCompleted,
+      repsCompleted: Math.max(currentPoint.repsCompleted, log.repsCompleted),
+      weightUsed: Math.max(currentPoint.weightUsed, log.weightUsed),
+    } : {
+      date: log.date,
+      oneRepMax: nextOneRepMax,
+      volume: log.volume,
+      setsCompleted: log.setsCompleted,
+      repsCompleted: log.repsCompleted,
+      weightUsed: log.weightUsed,
+    });
+
+    grouped.set(log.exerciseName, pointsByDate);
   }
 
-  const activeExercises = Array.from(volumeByExercise.entries())
-    .filter(([, volume]) => volume > 0)
-    .sort((left, right) => right[1] - left[1])
-    .slice(0, 3)
-    .map(([exerciseName]) => exerciseName);
+  return Array.from(grouped.entries())
+    .map(([exerciseName, pointsByDate]) => ({
+      exerciseName,
+      color: "#ef7f45",
+      points: Array.from(pointsByDate.values()).sort((left, right) => left.date.localeCompare(right.date)),
+    }))
+    .sort((left, right) => {
+      const leftCurrent = left.points[left.points.length - 1]?.oneRepMax ?? 0;
+      const rightCurrent = right.points[right.points.length - 1]?.oneRepMax ?? 0;
+      return rightCurrent - leftCurrent || left.exerciseName.localeCompare(right.exerciseName);
+    })
+    .map((series, index) => ({
+      ...series,
+      color: strengthPalette[index % strengthPalette.length],
+    }));
+};
 
-  if (activeExercises.length === 0) {
+const buildWeeklyStrengthVolumeBuckets = (series: StrengthSeries[]): WeeklyStrengthVolumeBucket[] => {
+  const weekKeys = Array.from(new Set(
+    series.flatMap((item) => item.points.map((point) => resolveWeekBucketKey(point.date))),
+  )).sort();
+
+  return weekKeys.map((weekKey, index) => {
+    const volumes = series.map((item) => ({
+      exerciseName: item.exerciseName,
+      color: item.color,
+      volume: item.points
+        .filter((point) => resolveWeekBucketKey(point.date) === weekKey)
+        .reduce((sum, point) => sum + point.volume, 0),
+    }));
+
+    return {
+      label: `W${index + 1}`,
+      volumes,
+      totalVolume: volumes.reduce((sum, item) => sum + item.volume, 0),
+    };
+  });
+};
+
+function StrengthPerformancePanel(props: {
+  exerciseLogsByDate: Record<string, ExerciseLogDraft[]>;
+}) {
+  const [strengthView, setStrengthView] = useState<StrengthViewMode>("progress");
+  const [selectedExerciseName, setSelectedExerciseName] = useState("");
+  const strengthSeries = buildStrengthSeries(props.exerciseLogsByDate);
+
+  if (strengthSeries.length === 0) {
     return (
       <>
         <div className="panel-header">
           <div>
-            <span className="eyebrow">Progressive overload</span>
-            <h3>Exercise volume over time</h3>
+            <span className="eyebrow">Strength profile</span>
+            <h3>Estimated 1RM comparison</h3>
           </div>
         </div>
         <p className="empty-line">
-          Add weight used for completed workouts to start drawing volume trends here.
+          Finish workouts with weight used to unlock estimated 1RM comparison, progress, and volume views.
         </p>
       </>
     );
   }
 
-  const dates = Array.from(new Set(allLogs.map((log) => log.date))).sort();
-  const chartWidth = 680;
-  const chartHeight = 250;
-  const paddingX = 34;
-  const paddingTop = 18;
-  const paddingBottom = 42;
-  const usableHeight = chartHeight - paddingTop - paddingBottom;
-  const usableWidth = chartWidth - (paddingX * 2);
-  const palette = ["#ef7f45", "#2f7f6d", "#4669f2"];
-  const series = activeExercises.map((exerciseName, index) => ({
-    exerciseName,
-    color: palette[index] ?? "#ef7f45",
-    points: dates.map((date, dateIndex) => {
-      const volume = allLogs
-        .filter((log) => log.date === date && log.exerciseName === exerciseName)
-        .reduce((sum, log) => sum + log.volume, 0);
+  const selectedSeries = strengthSeries.find((item) => item.exerciseName === selectedExerciseName) ?? strengthSeries[0];
+  const progressPoints = selectedSeries.points;
+  const compareSeries = strengthSeries.slice(0, 5);
+  const currentOneRepMax = progressPoints[progressPoints.length - 1]?.oneRepMax ?? 0;
+  const firstOneRepMax = progressPoints[0]?.oneRepMax ?? 0;
+  const allTimePrPoint = progressPoints.reduce((best, point) => (
+    point.oneRepMax > best.oneRepMax ? point : best
+  ), progressPoints[0]);
+  const totalGain = currentOneRepMax - firstOneRepMax;
+  const totalGainPercent = firstOneRepMax > 0 ? (totalGain / firstOneRepMax) * 100 : 0;
 
+  const renderProgressView = () => {
+    const chartWidth = 720;
+    const chartHeight = 280;
+    const paddingX = 36;
+    const paddingTop = 20;
+    const paddingBottom = 42;
+    const usableWidth = chartWidth - (paddingX * 2);
+    const usableHeight = chartHeight - paddingTop - paddingBottom;
+    const minValue = Math.min(...progressPoints.map((point) => point.oneRepMax));
+    const maxValue = Math.max(...progressPoints.map((point) => point.oneRepMax));
+    const valueRange = Math.max(maxValue - minValue, 4);
+    const resolveY = (value: number): number => (
+      paddingTop + ((maxValue + 2 - value) / (valueRange + 4)) * usableHeight
+    );
+    const points = progressPoints.map((point, index) => {
+      const x = paddingX + ((usableWidth / Math.max(progressPoints.length - 1, 1)) * index);
+      return `${x},${resolveY(point.oneRepMax)}`;
+    }).join(" ");
+    const filledAreaPoints = [
+      `${paddingX},${chartHeight - paddingBottom}`,
+      points,
+      `${paddingX + usableWidth},${chartHeight - paddingBottom}`,
+    ].join(" ");
+
+    return (
+      <>
+        <div className="strength-controls">
+          <strong>Estimated 1RM over time</strong>
+          <select
+            value={selectedSeries.exerciseName}
+            onChange={(event) => setSelectedExerciseName(event.target.value)}
+          >
+            {strengthSeries.map((item) => (
+              <option key={item.exerciseName} value={item.exerciseName}>
+                {item.exerciseName}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="stats-grid strength-stat-grid">
+          <MetricCard
+            title="Current 1RM"
+            value={`${formatStrengthValue(currentOneRepMax)} kg`}
+            detail="Estimated from the latest logged session"
+          />
+          <MetricCard
+            title="All-time PR"
+            value={`${formatStrengthValue(allTimePrPoint.oneRepMax)} kg`}
+            detail={humanDate(allTimePrPoint.date)}
+          />
+          <MetricCard
+            title="Total gain"
+            value={`${totalGain > 0 ? "+" : ""}${formatStrengthValue(totalGain)} kg`}
+            detail={`${totalGainPercent > 0 ? "+" : ""}${totalGainPercent.toFixed(1)}% from first session`}
+          />
+        </div>
+
+        <div className="body-chart-shell">
+          <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="body-chart" role="img" aria-label="Estimated 1RM over time">
+            {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+              const y = paddingTop + (usableHeight * ratio);
+              const value = maxValue + 2 - ((valueRange + 4) * ratio);
+
+              return (
+                <g key={ratio}>
+                  <line x1={paddingX} y1={y} x2={chartWidth - paddingX} y2={y} className="body-chart-grid" />
+                  <text x={8} y={y + 4} className="body-chart-axis">{formatStrengthValue(value)}</text>
+                </g>
+              );
+            })}
+
+            <polygon points={filledAreaPoints} className="strength-area-fill" />
+            <polyline points={points} className="body-chart-line" style={{ stroke: selectedSeries.color }} />
+            {progressPoints.map((point, index) => {
+              const x = paddingX + ((usableWidth / Math.max(progressPoints.length - 1, 1)) * index);
+
+              return (
+                <g key={point.date}>
+                  <circle cx={x} cy={resolveY(point.oneRepMax)} r={5} style={{ fill: selectedSeries.color }} />
+                  <text x={x} y={chartHeight - 12} textAnchor="middle" className="body-chart-axis">
+                    {`S${index + 1}`}
+                  </text>
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+
+        <div className="strength-chip-row">
+          <span className="strength-chip gain">{`${totalGainPercent > 0 ? "+" : ""}${totalGainPercent.toFixed(1)}% strength gain`}</span>
+          <span className="strength-chip pr">{`PR: ${formatStrengthValue(allTimePrPoint.oneRepMax)} kg`}</span>
+          <span className="strength-chip">{`${progressPoints.length} sessions logged`}</span>
+        </div>
+      </>
+    );
+  };
+
+  const renderCompareView = () => {
+    const chartWidth = 720;
+    const chartHeight = 280;
+    const paddingX = 36;
+    const paddingTop = 20;
+    const paddingBottom = 42;
+    const usableWidth = chartWidth - (paddingX * 2);
+    const usableHeight = chartHeight - paddingTop - paddingBottom;
+    const allDates = Array.from(new Set(compareSeries.flatMap((item) => item.points.map((point) => point.date)))).sort();
+    const minValue = Math.min(...compareSeries.flatMap((item) => item.points.map((point) => point.oneRepMax)));
+    const maxValue = Math.max(...compareSeries.flatMap((item) => item.points.map((point) => point.oneRepMax)));
+    const valueRange = Math.max(maxValue - minValue, 6);
+    const resolveY = (value: number): number => (
+      paddingTop + ((maxValue + 3 - value) / (valueRange + 6)) * usableHeight
+    );
+    const rankingRows = compareSeries
+      .map((item) => ({
+        exerciseName: item.exerciseName,
+        color: item.color,
+        current: item.points[item.points.length - 1]?.oneRepMax ?? 0,
+        gainPercent: item.points[0]?.oneRepMax
+          ? (((item.points[item.points.length - 1]?.oneRepMax ?? 0) - item.points[0].oneRepMax) / item.points[0].oneRepMax) * 100
+          : 0,
+      }))
+      .sort((left, right) => right.current - left.current);
+    const maxCurrent = Math.max(...rankingRows.map((item) => item.current), 1);
+    const maxGain = Math.max(...rankingRows.map((item) => Math.abs(item.gainPercent)), 1);
+
+    return (
+      <>
+        <div className="panel-header">
+          <div>
+            <span className="eyebrow">Compare</span>
+            <h3>All lifts, estimated 1RM progression</h3>
+          </div>
+        </div>
+
+        <div className="chart-legend">
+          {compareSeries.map((item) => (
+            <span key={item.exerciseName} className="chart-legend-item" style={{ ["--legend-color" as string]: item.color }}>
+              {item.exerciseName}
+            </span>
+          ))}
+        </div>
+
+        <div className="body-chart-shell">
+          <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="body-chart" role="img" aria-label="All lifts estimated 1RM progression">
+            {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+              const y = paddingTop + (usableHeight * ratio);
+              const value = maxValue + 3 - ((valueRange + 6) * ratio);
+
+              return (
+                <g key={ratio}>
+                  <line x1={paddingX} y1={y} x2={chartWidth - paddingX} y2={y} className="body-chart-grid" />
+                  <text x={8} y={y + 4} className="body-chart-axis">{formatStrengthValue(value)}</text>
+                </g>
+              );
+            })}
+
+            {compareSeries.map((item) => (
+              <g key={item.exerciseName}>
+                <polyline
+                  points={item.points.map((point) => {
+                    const dateIndex = allDates.indexOf(point.date);
+                    const x = paddingX + ((usableWidth / Math.max(allDates.length - 1, 1)) * dateIndex);
+                    return `${x},${resolveY(point.oneRepMax)}`;
+                  }).join(" ")}
+                  className="body-chart-line"
+                  style={{ stroke: item.color }}
+                />
+                {item.points.map((point) => {
+                  const dateIndex = allDates.indexOf(point.date);
+                  const x = paddingX + ((usableWidth / Math.max(allDates.length - 1, 1)) * dateIndex);
+
+                  return (
+                    <circle
+                      key={`${item.exerciseName}-${point.date}`}
+                      cx={x}
+                      cy={resolveY(point.oneRepMax)}
+                      r={4.5}
+                      style={{ fill: item.color }}
+                    />
+                  );
+                })}
+              </g>
+            ))}
+
+            {allDates.map((date, index) => {
+              const x = paddingX + ((usableWidth / Math.max(allDates.length - 1, 1)) * index);
+
+              return (
+                <text key={date} x={x} y={chartHeight - 12} textAnchor="middle" className="body-chart-axis">
+                  {`S${index + 1}`}
+                </text>
+              );
+            })}
+          </svg>
+        </div>
+
+        <div className="strength-detail-grid">
+          <article className="subpanel strength-bars">
+            <strong>Current 1RM ranking</strong>
+            {rankingRows.map((item) => (
+              <div key={item.exerciseName} className="strength-bar-row">
+                <span>{item.exerciseName}</span>
+                <div className="strength-bar-track">
+                  <span
+                    className="strength-bar-fill"
+                    style={{
+                      width: `${(item.current / maxCurrent) * 100}%`,
+                      background: item.color,
+                    }}
+                  />
+                </div>
+                <strong>{`${formatStrengthValue(item.current)} kg`}</strong>
+              </div>
+            ))}
+          </article>
+
+          <article className="subpanel strength-bars">
+            <strong>% gain since start</strong>
+            {rankingRows.map((item) => (
+              <div key={item.exerciseName} className="strength-bar-row">
+                <span>{item.exerciseName}</span>
+                <div className="strength-bar-track">
+                  <span
+                    className="strength-bar-fill"
+                    style={{
+                      width: `${(Math.abs(item.gainPercent) / maxGain) * 100}%`,
+                      background: item.color,
+                    }}
+                  />
+                </div>
+                <strong>{`${item.gainPercent > 0 ? "+" : ""}${item.gainPercent.toFixed(1)}%`}</strong>
+              </div>
+            ))}
+          </article>
+        </div>
+      </>
+    );
+  };
+
+  const renderVolumeView = () => {
+    const volumeSeries = compareSeries;
+    const weeklyBuckets = buildWeeklyStrengthVolumeBuckets(volumeSeries);
+    const chartWidth = 720;
+    const chartHeight = 260;
+    const paddingX = 40;
+    const paddingTop = 18;
+    const paddingBottom = 40;
+    const usableWidth = chartWidth - (paddingX * 2);
+    const usableHeight = chartHeight - paddingTop - paddingBottom;
+    const barSlot = usableWidth / Math.max(weeklyBuckets.length, 1);
+    const barWidth = barSlot * 0.62;
+    const maxVolume = Math.max(...weeklyBuckets.map((item) => item.totalVolume), 1);
+    const averageSetsRepsRows = volumeSeries.map((item) => {
+      const averageSets = item.points.reduce((sum, point) => sum + point.setsCompleted, 0) / Math.max(item.points.length, 1);
+      const averageReps = item.points.reduce((sum, point) => sum + point.repsCompleted, 0) / Math.max(item.points.length, 1);
       return {
-        date,
-        label: humanDate(date).slice(0, 3),
-        x: paddingX + ((usableWidth / Math.max(dates.length - 1, 1)) * dateIndex),
-        volume,
+        exerciseName: item.exerciseName,
+        color: item.color,
+        averageSets,
+        averageReps,
+        averageWork: averageSets * averageReps,
       };
-    }),
-  }));
-  const maxVolume = Math.max(1, ...series.flatMap((item) => item.points.map((point) => point.volume)));
-  const resolveY = (value: number): number => (
-    paddingTop + ((maxVolume - value) / maxVolume) * usableHeight
-  );
+    });
+    const maxAverageWork = Math.max(...averageSetsRepsRows.map((item) => item.averageWork), 1);
+
+    return (
+      <>
+        <div className="panel-header">
+          <div>
+            <span className="eyebrow">Volume</span>
+            <h3>Weekly training volume (kg × reps)</h3>
+          </div>
+        </div>
+
+        <div className="chart-legend">
+          {volumeSeries.map((item) => (
+            <span key={item.exerciseName} className="chart-legend-item" style={{ ["--legend-color" as string]: item.color }}>
+              {item.exerciseName}
+            </span>
+          ))}
+        </div>
+
+        <div className="body-chart-shell">
+          <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="body-chart" role="img" aria-label="Weekly training volume">
+            {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+              const y = paddingTop + (usableHeight * ratio);
+              const value = maxVolume - (maxVolume * ratio);
+
+              return (
+                <g key={ratio}>
+                  <line x1={paddingX} y1={y} x2={chartWidth - paddingX} y2={y} className="body-chart-grid" />
+                  <text x={8} y={y + 4} className="body-chart-axis">{formatNumber(value)}</text>
+                </g>
+              );
+            })}
+
+            {weeklyBuckets.map((bucket, index) => {
+              const x = paddingX + (barSlot * index) + ((barSlot - barWidth) / 2);
+              let runningHeight = 0;
+
+              return (
+                <g key={bucket.label}>
+                  {bucket.volumes.map((item) => {
+                    if (item.volume <= 0) {
+                      return null;
+                    }
+
+                    const segmentHeight = (item.volume / maxVolume) * usableHeight;
+                    const y = paddingTop + usableHeight - runningHeight - segmentHeight;
+                    runningHeight += segmentHeight;
+
+                    return (
+                      <rect
+                        key={`${bucket.label}-${item.exerciseName}`}
+                        x={x}
+                        y={y}
+                        width={barWidth}
+                        height={segmentHeight}
+                        rx={12}
+                        style={{ fill: item.color }}
+                      />
+                    );
+                  })}
+                  <text x={x + (barWidth / 2)} y={chartHeight - 12} textAnchor="middle" className="body-chart-axis">
+                    {bucket.label}
+                  </text>
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+
+        <div className="strength-detail-grid">
+          <article className="subpanel strength-bars">
+            <strong>Avg sets × reps per session</strong>
+            {averageSetsRepsRows.map((item) => (
+              <div key={item.exerciseName} className="strength-bar-row">
+                <span>{item.exerciseName}</span>
+                <div className="strength-bar-track">
+                  <span
+                    className="strength-bar-fill"
+                    style={{
+                      width: `${(item.averageWork / maxAverageWork) * 100}%`,
+                      background: item.color,
+                    }}
+                  />
+                </div>
+                <strong>{`${Math.round(item.averageSets)}×${Math.round(item.averageReps)}`}</strong>
+              </div>
+            ))}
+          </article>
+        </div>
+      </>
+    );
+  };
 
   return (
     <>
       <div className="panel-header">
         <div>
-          <span className="eyebrow">Progressive overload</span>
-          <h3>Exercise volume over time</h3>
-          <p className="muted-line">Volume = sets × reps × weight used.</p>
+          <span className="eyebrow">Strength profile</span>
+          <h3>Estimated 1RM comparison</h3>
+          <p className="muted-line">Based on logged weight and reps from completed workouts.</p>
         </div>
       </div>
 
-      <div className="chart-legend">
-        {series.map((item) => (
-          <span
-            key={item.exerciseName}
-            className="chart-legend-item"
-            style={{ ["--legend-color" as string]: item.color }}
+      <div className="inline-actions">
+        {[
+          { value: "progress", label: "Progress" },
+          { value: "compare", label: "Compare" },
+          { value: "volume", label: "Volume" },
+        ].map((item) => (
+          <button
+            key={item.value}
+            type="button"
+            className={strengthView === item.value ? "toggle active" : "toggle"}
+            onClick={() => setStrengthView(item.value as StrengthViewMode)}
           >
-            {item.exerciseName}
-          </span>
+            {item.label}
+          </button>
         ))}
       </div>
 
-      <div className="body-chart-shell">
-        <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="body-chart" role="img" aria-label="Exercise volume over time">
-          {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
-            const value = Math.round(maxVolume * ratio);
-            const y = resolveY(value);
-
-            return (
-              <g key={ratio}>
-                <line x1={paddingX} y1={y} x2={chartWidth - paddingX} y2={y} className="body-chart-grid" />
-                <text x={6} y={y + 4} className="body-chart-axis">{formatNumber(value)}</text>
-              </g>
-            );
-          })}
-
-          {series.map((item) => (
-            <g key={item.exerciseName}>
-              <polyline
-                points={item.points.map((point) => `${point.x},${resolveY(point.volume)}`).join(" ")}
-                className="body-chart-line"
-                style={{ stroke: item.color }}
-              />
-              {item.points.map((point) => (
-                <circle
-                  key={`${item.exerciseName}-${point.date}`}
-                  cx={point.x}
-                  cy={resolveY(point.volume)}
-                  r={4}
-                  style={{ fill: item.color }}
-                />
-              ))}
-            </g>
-          ))}
-
-          {dates.map((date, index) => {
-            const x = paddingX + ((usableWidth / Math.max(dates.length - 1, 1)) * index);
-
-            return (
-              <text key={date} x={x} y={chartHeight - 12} textAnchor="middle" className="body-chart-axis">
-                {new Date(`${date}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-              </text>
-            );
-          })}
-        </svg>
-      </div>
+      {strengthView === "progress" ? renderProgressView() : null}
+      {strengthView === "compare" ? renderCompareView() : null}
+      {strengthView === "volume" ? renderVolumeView() : null}
     </>
   );
 }
@@ -2294,6 +2695,7 @@ function DietView(props: {
 
   const activeDay = plan.days.find((day) => day.day === props.selectedDay) ?? plan.days[0];
   const activeDate = props.weekDays.find((item) => item.dayNumber === activeDay.day)?.date ?? todayKey();
+  const activeProgress = props.weekProgress[activeDate];
   const visibleMeals = getRenderableMealConfig(activeDay);
   const isFutureDay = activeDate > todayKey();
 
@@ -2303,9 +2705,14 @@ function DietView(props: {
         <div className="panel-header split-end">
           <div>
             <span className="eyebrow">7-day diet</span>
-            <h3>{formatEnergyValue(Math.round(plan.summary.dailyCalories * kilojoulesPerCalorie), props.energyUnitPreference)} target</h3>
+            <h3>
+              {formatEnergyValue(Math.round(plan.summary.dailyCalories * kilojoulesPerCalorie), props.energyUnitPreference)} target · {" "}
+              {formatEnergyValue(activeProgress?.totals.kilojoulesConsumed ?? 0, props.energyUnitPreference)} consumed
+            </h3>
             <p className="muted-line">
-              {props.selectedDietType === "recipes" ? "Recipe mode" : "Simple meals mode"} · Protein {plan.summary.macros.protein} · Carbs {plan.summary.macros.carbs} · Fats {plan.summary.macros.fats}
+              Target: P {plan.summary.macros.protein} · C {plan.summary.macros.carbs} · F {plan.summary.macros.fats}
+              {" · "}
+              Consumed: P {activeProgress?.macroTotals.proteinGrams ?? 0}g · C {activeProgress?.macroTotals.carbsGrams ?? 0}g · F {activeProgress?.macroTotals.fatsGrams ?? 0}g
             </p>
           </div>
           <div className="panel-header-aside">
