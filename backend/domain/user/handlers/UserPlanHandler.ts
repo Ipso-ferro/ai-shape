@@ -63,7 +63,9 @@ export class UserPlanHandler {
     }
 
     if (result.workoutPlan) {
-      await this.repositoryUser.saveWorkoutPlan(command.userId, result.workoutPlan);
+      await this.repositoryUser.saveWorkoutPlan(command.userId, result.workoutPlan, {
+        week,
+      });
     }
 
     if (result.shoppingList) {

@@ -37,7 +37,7 @@ import {
 
 class RepositoryUserMock implements RepositoryUser {
   private readonly dietPlans = new Map<string, DietPlan>();
-  private workoutPlan: WorkoutPlan | null = null;
+  private readonly workoutPlans = new Map<PlanWeek, WorkoutPlan>();
   private readonly shoppingLists = new Map<string, ShoppingList>();
   private readonly progressDays = new Map<string, UserProgressDay>();
   private readonly trackingEntries = new Map<string, UserTrackingEntry>();
@@ -53,8 +53,6 @@ class RepositoryUserMock implements RepositoryUser {
     dietPlan: DietPlan | null = null,
     workoutPlan: WorkoutPlan | null = null,
   ) {
-    this.workoutPlan = workoutPlan;
-
     if (user) {
       this.usersById.set(user.id, user);
     }
@@ -72,8 +70,9 @@ class RepositoryUserMock implements RepositoryUser {
     }
 
     if (workoutPlan) {
+      this.workoutPlans.set("current", workoutPlan);
       for (const day of workoutPlan.days) {
-        this.workoutDayCompletionStates.set(String(day.day), false);
+        this.workoutDayCompletionStates.set(`current:${day.day}`, false);
       }
     }
   }
@@ -89,6 +88,10 @@ class RepositoryUserMock implements RepositoryUser {
     mealSlot: TrackableMealSlot,
   ): string {
     return `${dietType}:${week}:${dayNumber}:${mealSlot}`;
+  }
+
+  private resolveWorkoutDayStateKey(week: PlanWeek, dayNumber: number): string {
+    return `${week}:${dayNumber}`;
   }
 
   private createEmptyMealState(): DietPlanDayMealState {
@@ -124,12 +127,12 @@ class RepositoryUserMock implements RepositoryUser {
     };
   }
 
-  private buildWorkoutPlanWithCompletionState(workoutPlan: WorkoutPlan): WorkoutPlan {
+  private buildWorkoutPlanWithCompletionState(workoutPlan: WorkoutPlan, week: PlanWeek): WorkoutPlan {
     return {
       ...workoutPlan,
       days: workoutPlan.days.map((day) => ({
         ...day,
-        completed: this.getWorkoutPlanCompletionState(day.day) ?? false,
+        completed: this.getWorkoutPlanCompletionState(week, day.day) ?? false,
       })),
     };
   }
@@ -230,16 +233,21 @@ class RepositoryUserMock implements RepositoryUser {
   async saveWorkoutPlan(
     _userId: string,
     workoutPlan: WorkoutPlan,
+    options?: { week?: PlanWeek },
   ): Promise<WorkoutPlan> {
-    this.workoutPlan = workoutPlan;
+    const week = options?.week ?? "current";
+    this.workoutPlans.set(week, workoutPlan);
     for (const day of workoutPlan.days) {
-      this.workoutDayCompletionStates.set(String(day.day), false);
+      this.workoutDayCompletionStates.set(this.resolveWorkoutDayStateKey(week, day.day), false);
     }
     return workoutPlan;
   }
 
-  async getWorkoutPlan(_userId: string): Promise<WorkoutPlan | null> {
-    return this.workoutPlan ? this.buildWorkoutPlanWithCompletionState(this.workoutPlan) : null;
+  async getWorkoutPlan(_userId: string, options?: PlanSelectionOptions): Promise<WorkoutPlan | null> {
+    const week = options?.week ?? "current";
+    const workoutPlan = this.workoutPlans.get(week) ?? null;
+
+    return workoutPlan ? this.buildWorkoutPlanWithCompletionState(workoutPlan, week) : null;
   }
 
   async saveShoppingList(
@@ -334,8 +342,9 @@ class RepositoryUserMock implements RepositoryUser {
     _userId: string,
     dayNumber: number,
     completed: boolean,
+    week: PlanWeek = "current",
   ): Promise<void> {
-    this.workoutDayCompletionStates.set(String(dayNumber), completed);
+    this.workoutDayCompletionStates.set(this.resolveWorkoutDayStateKey(week, dayNumber), completed);
   }
 
   async getUserProgressDay(
@@ -476,8 +485,8 @@ class RepositoryUserMock implements RepositoryUser {
     return this.dietMealEatenStates.get(this.resolveDietDayStateKey(dietType, week, dayNumber, mealSlot));
   }
 
-  getWorkoutPlanCompletionState(dayNumber: number): boolean | undefined {
-    return this.workoutDayCompletionStates.get(String(dayNumber));
+  getWorkoutPlanCompletionState(week: PlanWeek, dayNumber: number): boolean | undefined {
+    return this.workoutDayCompletionStates.get(this.resolveWorkoutDayStateKey(week, dayNumber));
   }
 }
 
@@ -978,7 +987,7 @@ test("PUT /progress/users/:id/meals/:mealSlot and /workout track daily energy to
     assert.equal(workoutPayload.totals.caloriesBurned, 350);
     assert.equal(workoutPayload.totals.kilojoulesBurned, 1464);
     assert.equal(workoutPayload.totals.netCalories, 30);
-    assert.equal(repositoryUser.getWorkoutPlanCompletionState(1), true);
+    assert.equal(repositoryUser.getWorkoutPlanCompletionState("current", 1), true);
 
     const storedWorkoutResponse = await fetch(`${baseUrl}/workouts/users/${sampleUser.id}/plan`, {
       headers: createAuthHeaders(),

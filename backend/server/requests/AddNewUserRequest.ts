@@ -6,6 +6,9 @@ import { DietCommand } from "../../domain/diet/command/DietCommand";
 export type AddNewUserRequestBody = AddNewUserCommand;
 export type SaveDataUserRequestBody = Omit<SaveDataUserCommand, "id">;
 export type GenerateDietPlanRequestBody = Omit<DietCommand, "userId">;
+export interface GenerateWorkoutPlanRequestBody {
+  week?: "current" | "next";
+}
 export type GenerateCompletePlanRequestBody = Omit<
   GenerateCompletePlanCommand,
   "userId"

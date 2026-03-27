@@ -1,4 +1,4 @@
-import { WeekDay } from "./types";
+import { PlanWeek, WeekDay } from "./types";
 
 const weekLabels = [
   { label: "Monday", shortLabel: "Mon" },
@@ -9,6 +9,9 @@ const weekLabels = [
   { label: "Saturday", shortLabel: "Sat" },
   { label: "Sunday", shortLabel: "Sun" },
 ] as const;
+
+const millisecondsPerDay = 24 * 60 * 60 * 1000;
+const epochMondayTimestamp = Date.UTC(1970, 0, 5);
 
 const toDateKey = (value: Date): string => {
   const year = value.getFullYear();
@@ -61,3 +64,20 @@ export const getCurrentWeek = (referenceDate = new Date()): WeekDay[] => {
     };
   });
 };
+
+export const getWeekStartKey = (referenceDate = new Date()): string => (
+  getCurrentWeek(referenceDate)[0]?.date ?? todayKey()
+);
+
+export const getPlanWeekForDate = (referenceDate = new Date()): PlanWeek => {
+  const weekStart = getCurrentWeek(referenceDate)[0]?.date ?? todayKey();
+  const [yearText, monthText, dayText] = weekStart.split("-");
+  const value = new Date(Date.UTC(Number(yearText), Number(monthText) - 1, Number(dayText)));
+  const weekIndex = Math.floor((value.getTime() - epochMondayTimestamp) / (7 * millisecondsPerDay));
+
+  return Math.abs(weekIndex % 2) === 0 ? "current" : "next";
+};
+
+export const getFuturePlanWeekForDate = (referenceDate = new Date()): PlanWeek => (
+  getPlanWeekForDate(referenceDate) === "current" ? "next" : "current"
+);

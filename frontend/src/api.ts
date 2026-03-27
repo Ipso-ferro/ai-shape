@@ -158,11 +158,13 @@ export const api = {
   getDietPlan: (userId: string, options?: PlanSelectionOptions) => (
     optional<DietPlan>(`/diets/users/${userId}/plan${buildPlanQuery(options)}`)
   ),
-  generateWorkoutPlan: (userId: string) => request<WorkoutPlan>(`/workouts/users/${userId}/plan`, {
+  generateWorkoutPlan: (userId: string, options?: { week?: "current" | "next" }) => request<WorkoutPlan>(`/workouts/users/${userId}/plan`, {
     method: "POST",
-    body: JSON.stringify({}),
+    body: JSON.stringify({
+      week: options?.week ?? "current",
+    }),
   }),
-  getWorkoutPlan: (userId: string) => optional<WorkoutPlan>(`/workouts/users/${userId}/plan`),
+  getWorkoutPlan: (userId: string, options?: PlanSelectionOptions) => optional<WorkoutPlan>(`/workouts/users/${userId}/plan${buildPlanQuery(options)}`),
   getShoppingList: (userId: string, options?: PlanSelectionOptions) => (
     optional<ShoppingList>(`/shopping/users/${userId}/list${buildPlanQuery(options)}`)
   ),
@@ -197,9 +199,10 @@ export const api = {
     date: string,
     completed: boolean,
     exerciseLogs?: UserExerciseLogInput[],
+    options?: { week?: "current" | "next" },
   ) => request<ProgressDay>(`/progress/users/${userId}/workout`, {
     method: "PUT",
-    body: JSON.stringify({ date, completed, exerciseLogs }),
+    body: JSON.stringify({ date, completed, exerciseLogs, week: options?.week }),
   }),
   saveWater: (
     userId: string,

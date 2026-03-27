@@ -1,7 +1,7 @@
 import { RepositoryUser } from "../../user/repositories/RepositoryUser";
 import { NutritionGoalCalculatorService } from "../../user/handlers/services/NutritionGoalCalculatorService";
 import { generateWorkoutPlan } from "../../../src/api/workOutPlanGenerator";
-import { WorkoutPlan } from "../../../src/types";
+import { PlanWeek, WorkoutPlan } from "../../../src/types";
 import { WorkoutsCommand } from "../command/WorkoutsCommand";
 import {
   WorkoutPlanGenerator,
@@ -27,7 +27,7 @@ export class WorkoutsHandler {
     return this.workoutPlanService.generatePlan(command);
   }
 
-  async getPlan(userId: string): Promise<WorkoutPlan> {
-    return this.workoutPlanService.getPlan(userId);
+  async getPlan(userId: string, week?: PlanWeek): Promise<WorkoutPlan> {
+    return this.workoutPlanService.getPlan(userId, week);
   }
 }

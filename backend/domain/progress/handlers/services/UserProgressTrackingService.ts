@@ -15,6 +15,7 @@ import {
   DietPlanDay,
   DietPlanEntry,
   MacroSnapshot,
+  PlanWeek,
   TrackableMealSlot,
   UserExerciseLog,
   UserExerciseLogInput,
@@ -42,6 +43,8 @@ const weekdayNames = [
 
 const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
 const kilojoulesPerCalorie = 4.184;
+const millisecondsPerDay = 24 * 60 * 60 * 1000;
+const epochMondayTimestamp = Date.UTC(1970, 0, 5);
 
 const createEmptyMealStatus = (): UserProgressMealStatus => ({
   completed: false,
@@ -166,6 +169,17 @@ const buildDateRange = (startDate: string, endDate: string): string[] => {
   }
 
   return dates;
+};
+
+const resolvePlanWeekForDate = (date: string): PlanWeek => {
+  const [yearText, monthText, dayText] = date.split("-");
+  const value = new Date(Date.UTC(Number(yearText), Number(monthText) - 1, Number(dayText)));
+  const weekday = value.getUTCDay();
+  const mondayOffset = weekday === 0 ? -6 : 1 - weekday;
+  value.setUTCDate(value.getUTCDate() + mondayOffset);
+  const weekIndex = Math.floor((value.getTime() - epochMondayTimestamp) / (7 * millisecondsPerDay));
+
+  return Math.abs(weekIndex % 2) === 0 ? "current" : "next";
 };
 
 const resolvePeriodRange = (
@@ -587,9 +601,10 @@ export class UserProgressTrackingService {
     const selectedDietType = command.dietType ?? (
       user.kindOfDiet === "single-food" ? "single-food" : "recipes"
     );
+    const selectedWeek = command.week ?? resolvePlanWeekForDate(date);
     const dietPlan = await this.repositoryUser.getDietPlan(command.userId, {
       dietType: selectedDietType,
-      week: command.week,
+      week: selectedWeek,
     });
 
     if (!dietPlan) {
@@ -624,7 +639,7 @@ export class UserProgressTrackingService {
       nextDay.planDayNumber,
       command.mealSlot,
       command.completed,
-      command.week,
+      selectedWeek,
     );
     await this.syncTrackingEntry({
       user,
@@ -641,7 +656,10 @@ export class UserProgressTrackingService {
     const date = normaliseDate(command.date);
     assertNotFutureDate(date);
     const user = await this.getUser(command.userId);
-    const workoutPlan = await this.repositoryUser.getWorkoutPlan(command.userId);
+    const planWeek = resolvePlanWeekForDate(date);
+    const workoutPlan = await this.repositoryUser.getWorkoutPlan(command.userId, {
+      week: planWeek,
+    });
 
     if (!workoutPlan) {
       throw new NotFoundError(`Workout plan for user "${command.userId}" was not found.`);
@@ -670,6 +688,7 @@ export class UserProgressTrackingService {
       command.userId,
       nextDay.planDayNumber,
       nextDay.workout.completed,
+      planWeek,
     );
     await this.repositoryUser.replaceUserExerciseLogs(
       command.userId,
@@ -857,7 +876,7 @@ export class UserProgressTrackingService {
     );
     const dietPlan = await this.repositoryUser.getDietPlan(user.id, {
       dietType,
-      week: options?.week ?? "current",
+      week: options?.week ?? resolvePlanWeekForDate(date),
     });
 
     if (!dietPlan) {
@@ -871,7 +890,9 @@ export class UserProgressTrackingService {
     userId: string,
     date: string,
   ): Promise<WorkoutPlanDay | null> {
-    const workoutPlan = await this.repositoryUser.getWorkoutPlan(userId);
+    const workoutPlan = await this.repositoryUser.getWorkoutPlan(userId, {
+      week: resolvePlanWeekForDate(date),
+    });
 
     if (!workoutPlan) {
       return null;

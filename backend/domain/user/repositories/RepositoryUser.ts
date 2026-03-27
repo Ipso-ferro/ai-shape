@@ -8,6 +8,7 @@ import {
   TrackableMealSlot,
   PlanSelectionOptions,
   SaveDietPlanOptions,
+  SaveWorkoutPlanOptions,
   ShoppingList,
   UserExerciseLog,
   UserTrackingEntry,
@@ -31,8 +32,12 @@ export interface RepositoryUser {
     options?: SaveDietPlanOptions,
   ): Promise<DietPlan>;
   getDietPlan(userId: string, options?: PlanSelectionOptions): Promise<DietPlan | null>;
-  saveWorkoutPlan(userId: string, workoutPlan: WorkoutPlan): Promise<WorkoutPlan>;
-  getWorkoutPlan(userId: string): Promise<WorkoutPlan | null>;
+  saveWorkoutPlan(
+    userId: string,
+    workoutPlan: WorkoutPlan,
+    options?: SaveWorkoutPlanOptions,
+  ): Promise<WorkoutPlan>;
+  getWorkoutPlan(userId: string, options?: PlanSelectionOptions): Promise<WorkoutPlan | null>;
   saveShoppingList(
     userId: string,
     shoppingList: ShoppingList,
@@ -59,6 +64,7 @@ export interface RepositoryUser {
     userId: string,
     dayNumber: number,
     completed: boolean,
+    week?: PlanWeek,
   ): Promise<void>;
   getUserProgressDay(userId: string, date: string): Promise<UserProgressDay | null>;
   listUserProgressDays(

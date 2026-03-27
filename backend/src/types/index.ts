@@ -35,6 +35,10 @@ export interface SaveDietPlanOptions {
   activateDietType?: boolean;
 }
 
+export interface SaveWorkoutPlanOptions {
+  week?: PlanWeek;
+}
+
 export interface DietContext {
   targetCalories: number;
   targetKilojoules: number;

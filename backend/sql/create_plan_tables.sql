@@ -59,6 +59,8 @@ CREATE TABLE IF NOT EXISTS user_recipe_plan (
 CREATE TABLE IF NOT EXISTS user_workout_plan_days (
   id CHAR(36) NOT NULL,
   user_id CHAR(36) NOT NULL,
+  plan_week VARCHAR(20) NOT NULL DEFAULT 'current',
+  overview JSON DEFAULT NULL,
   day_number TINYINT UNSIGNED NOT NULL,
   day_name VARCHAR(20) NOT NULL,
   focus VARCHAR(255) NOT NULL,
@@ -71,8 +73,9 @@ CREATE TABLE IF NOT EXISTS user_workout_plan_days (
   complete BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (user_id, day_number),
+  PRIMARY KEY (user_id, plan_week, day_number),
   UNIQUE KEY uk_user_workout_plan_days_id (id),
+  KEY idx_user_workout_plan_days_week (user_id, plan_week),
   CONSTRAINT fk_user_workout_plan_days_user
     FOREIGN KEY (user_id) REFERENCES users(id)
     ON DELETE CASCADE

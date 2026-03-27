@@ -5,9 +5,10 @@ import { generateWorkoutPlan } from "../../../../src/api/workOutPlanGenerator";
 import {
   ApiResponse,
   DataUserCommand as PlanDataUserCommand,
+  PlanWeek,
   WorkoutPlan,
 } from "../../../../src/types";
-import { validateUserData } from "../../../../src/utils/validators";
+import { validatePlanWeek, validateUserData } from "../../../../src/utils/validators";
 import { WorkoutsCommand } from "../../command/WorkoutsCommand";
 
 export type WorkoutPlanGenerator = (
@@ -30,16 +31,24 @@ export class WorkoutPlanService {
 
     const hydratedUserData = this.nutritionGoalCalculatorService.hydrate(userData);
     validateUserData(hydratedUserData as PlanDataUserCommand);
+    const week = resolvePlanWeek(command.week);
+    validatePlanWeek(week);
 
     const result = await this.workoutPlanGenerator(
       hydratedUserData as PlanDataUserCommand,
     );
 
-    return this.repositoryUser.saveWorkoutPlan(command.userId, result.data);
+    return this.repositoryUser.saveWorkoutPlan(command.userId, result.data, {
+      week,
+    });
   }
 
-  async getPlan(userId: string): Promise<WorkoutPlan> {
-    const plan = await this.repositoryUser.getWorkoutPlan(userId);
+  async getPlan(userId: string, week?: PlanWeek): Promise<WorkoutPlan> {
+    const planWeek = resolvePlanWeek(week);
+    validatePlanWeek(planWeek);
+    const plan = await this.repositoryUser.getWorkoutPlan(userId, {
+      week: planWeek,
+    });
 
     if (!plan) {
       throw new NotFoundError(`Workout plan for user "${userId}" was not found.`);
@@ -48,3 +57,7 @@ export class WorkoutPlanService {
     return plan;
   }
 }
+
+const resolvePlanWeek = (requestedWeek?: PlanWeek): PlanWeek => (
+  requestedWeek === "next" ? "next" : "current"
+);

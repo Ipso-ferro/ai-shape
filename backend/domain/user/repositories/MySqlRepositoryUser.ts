@@ -104,6 +104,8 @@ interface UserPlanStateRow extends RowDataPacket {
 }
 
 interface WorkoutPlanDayRow extends RowDataPacket {
+  plan_week: string;
+  overview: WorkoutPlan["overview"] | string | null;
   day_number: number | string;
   day_name: string;
   focus: string;
@@ -1566,9 +1568,12 @@ export class MySqlRepositoryUser implements RepositoryUser {
   async saveWorkoutPlan(
     userId: string,
     workoutPlan: WorkoutPlan,
+    options?: { week?: PlanWeek },
   ): Promise<WorkoutPlan> {
     assertNonEmptyString(userId, "userId");
     assertWorkoutPlan(workoutPlan);
+    const planWeek = resolvePlanWeek(options?.week);
+    assertPlanWeek(planWeek);
 
     const connection = await this.pool.getConnection();
 
@@ -1576,25 +1581,28 @@ export class MySqlRepositoryUser implements RepositoryUser {
       await connection.beginTransaction();
       await this.ensureUserExists(connection, userId);
 
-      await connection.execute<ResultSetHeader>(
-        `
-          UPDATE users
-          SET
-            workout_plan_overview = ?
-          WHERE id = ?
-        `,
-        [
-          JSON.stringify(workoutPlan.overview),
-          userId,
-        ],
-      );
+      if (planWeek === "current") {
+        await connection.execute<ResultSetHeader>(
+          `
+            UPDATE users
+            SET
+              workout_plan_overview = ?
+            WHERE id = ?
+          `,
+          [
+            JSON.stringify(workoutPlan.overview),
+            userId,
+          ],
+        );
+      }
 
       await connection.execute<ResultSetHeader>(
         `
           DELETE FROM user_workout_plan_days
           WHERE user_id = ?
+            AND plan_week = ?
         `,
-        [userId],
+        [userId, planWeek],
       );
 
       for (const day of workoutPlan.days) {
@@ -1603,6 +1611,8 @@ export class MySqlRepositoryUser implements RepositoryUser {
             INSERT INTO user_workout_plan_days (
               id,
               user_id,
+              plan_week,
+              overview,
               day_number,
               day_name,
               focus,
@@ -1614,11 +1624,13 @@ export class MySqlRepositoryUser implements RepositoryUser {
               estimated_kilojoules_burned,
               complete
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
           [
             randomUUID(),
             userId,
+            planWeek,
+            JSON.stringify(workoutPlan.overview),
             day.day,
             day.dayName,
             day.focus,
@@ -1643,37 +1655,18 @@ export class MySqlRepositoryUser implements RepositoryUser {
     }
   }
 
-  async getWorkoutPlan(userId: string): Promise<WorkoutPlan | null> {
+  async getWorkoutPlan(userId: string, options?: PlanSelectionOptions): Promise<WorkoutPlan | null> {
     assertNonEmptyString(userId, "userId");
 
     try {
-      const [userRows] = await this.pool.execute<UserPlanStateRow[]>(
-        `
-          SELECT
-            workout_plan_overview
-          FROM users
-          WHERE id = ?
-          LIMIT 1
-        `,
-        [userId],
-      );
-
-      if (userRows.length === 0) {
-        return null;
-      }
-
-      const overview = parseJsonValue<WorkoutPlan["overview"] | null>(
-        userRows[0].workout_plan_overview,
-        null,
-      );
-
-      if (!overview) {
-        return null;
-      }
+      const planWeek = resolvePlanWeek(options?.week);
+      assertPlanWeek(planWeek);
 
       const [dayRows] = await this.pool.execute<WorkoutPlanDayRow[]>(
         `
           SELECT
+            plan_week,
+            overview,
             day_number,
             day_name,
             focus,
@@ -1686,12 +1679,22 @@ export class MySqlRepositoryUser implements RepositoryUser {
             complete
           FROM user_workout_plan_days
           WHERE user_id = ?
+            AND plan_week = ?
           ORDER BY day_number ASC
         `,
-        [userId],
+        [userId, planWeek],
       );
 
       if (dayRows.length === 0) {
+        return null;
+      }
+
+      const overview = parseJsonValue<WorkoutPlan["overview"] | null>(
+        dayRows[0].overview,
+        null,
+      );
+
+      if (!overview) {
         return null;
       }
 
@@ -2059,10 +2062,14 @@ export class MySqlRepositoryUser implements RepositoryUser {
     userId: string,
     dayNumber: number,
     completed: boolean,
+    week: PlanWeek = "current",
   ): Promise<void> {
     assertNonEmptyString(userId, "userId");
     assertPositiveInteger(dayNumber, "dayNumber");
     assertBoolean(completed, "completed");
+    assertPlanWeek(week);
+
+    const planWeek = resolvePlanWeek(week);
 
     try {
       const [result] = await this.pool.execute<ResultSetHeader>(
@@ -2070,11 +2077,13 @@ export class MySqlRepositoryUser implements RepositoryUser {
           UPDATE user_workout_plan_days
           SET complete = ?
           WHERE user_id = ?
+            AND plan_week = ?
             AND day_number = ?
         `,
         [
           completed,
           userId,
+          planWeek,
           dayNumber,
         ],
       );

@@ -36,6 +36,8 @@ const createWorkoutPlanDaysTableStatement = `
   CREATE TABLE IF NOT EXISTS user_workout_plan_days (
     id CHAR(36) NOT NULL,
     user_id CHAR(36) NOT NULL,
+    plan_week VARCHAR(20) NOT NULL DEFAULT 'current',
+    overview JSON NULL,
     day_number TINYINT UNSIGNED NOT NULL,
     day_name VARCHAR(20) NOT NULL,
     focus VARCHAR(255) NOT NULL,
@@ -48,8 +50,9 @@ const createWorkoutPlanDaysTableStatement = `
     complete BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (user_id, day_number),
+    PRIMARY KEY (user_id, plan_week, day_number),
     UNIQUE KEY uk_user_workout_plan_days_id (id),
+    KEY idx_user_workout_plan_days_week (user_id, plan_week),
     CONSTRAINT fk_user_workout_plan_days_user
       FOREIGN KEY (user_id) REFERENCES users(id)
       ON DELETE CASCADE
@@ -738,8 +741,18 @@ const migrateLegacyDietDays = async (pool: Pool): Promise<void> => {
 const migrateLegacyWorkoutDays = async (pool: Pool): Promise<void> => {
   const legacyWorkoutHeaderExists = await tableExists(pool, "user_workout_plans");
   const workoutDaysExists = await tableExists(pool, "user_workout_plan_days");
+  const workoutPlanWeekExists = workoutDaysExists
+    ? await columnExists(pool, "user_workout_plan_days", "plan_week")
+    : false;
+  const workoutOverviewExists = workoutDaysExists
+    ? await columnExists(pool, "user_workout_plan_days", "overview")
+    : false;
 
-  if (!legacyWorkoutHeaderExists) {
+  if (!legacyWorkoutHeaderExists && workoutDaysExists && workoutPlanWeekExists && workoutOverviewExists) {
+    return;
+  }
+
+  if (!legacyWorkoutHeaderExists && !workoutDaysExists) {
     await pool.query(createWorkoutPlanDaysTableStatement);
     return;
   }
@@ -765,6 +778,8 @@ const migrateLegacyWorkoutDays = async (pool: Pool): Promise<void> => {
       INSERT INTO user_workout_plan_days_tmp (
         id,
         user_id,
+        plan_week,
+        overview,
         day_number,
         day_name,
         focus,
@@ -776,16 +791,20 @@ const migrateLegacyWorkoutDays = async (pool: Pool): Promise<void> => {
       )
       SELECT
         UUID(),
-        user_id,
-        day_number,
-        day_name,
-        focus,
-        warm_up,
-        exercises,
-        cool_down,
-        total_duration,
+        workout_days.user_id,
+        'current',
+        users_table.workout_plan_overview,
+        workout_days.day_number,
+        workout_days.day_name,
+        workout_days.focus,
+        workout_days.warm_up,
+        workout_days.exercises,
+        workout_days.cool_down,
+        workout_days.total_duration,
         FALSE
-      FROM user_workout_plan_days
+      FROM user_workout_plan_days AS workout_days
+      INNER JOIN users AS users_table
+        ON users_table.id = workout_days.user_id
     `,
   );
 

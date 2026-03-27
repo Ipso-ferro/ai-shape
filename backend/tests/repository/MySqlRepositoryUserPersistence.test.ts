@@ -409,11 +409,12 @@ const getDietRowState = async (
 
 const getWorkoutRowState = async (
   userId: string,
+  week: "current" | "next",
   dayNumber: number,
 ): Promise<BooleanStateRow | null> => {
   const [rows] = await mysqlPool.execute<BooleanStateRow[]>(
-    "SELECT id, complete FROM user_workout_plan_days WHERE user_id = ? AND day_number = ? LIMIT 1",
-    [userId, dayNumber],
+    "SELECT id, complete FROM user_workout_plan_days WHERE user_id = ? AND plan_week = ? AND day_number = ? LIMIT 1",
+    [userId, week, dayNumber],
   );
 
   return rows[0] ?? null;
@@ -673,10 +674,12 @@ test("diet and workout plan rows persist ids and completion flags", async (t) =>
     week: "current",
     activateDietType: false,
   });
-  await repository.saveWorkoutPlan(userId, buildWorkoutPlan());
+  await repository.saveWorkoutPlan(userId, buildWorkoutPlan(), {
+    week: "current",
+  });
 
   const initialDietRow = await getDietRowState("user_diet_plan", userId, "current", 1);
-  const initialWorkoutRow = await getWorkoutRowState(userId, 1);
+  const initialWorkoutRow = await getWorkoutRowState(userId, "current", 1);
 
   assert.ok(initialDietRow?.id);
   assert.equal(Boolean(initialDietRow?.breakfast_eaten), false);
@@ -685,12 +688,12 @@ test("diet and workout plan rows persist ids and completion flags", async (t) =>
   assert.equal(Boolean(initialWorkoutRow?.complete), false);
 
   await repository.syncDietPlanMealEatenState(userId, "single-food", 1, "breakfast", true, "current");
-  await repository.syncWorkoutPlanDayCompletionState(userId, 1, true);
+  await repository.syncWorkoutPlanDayCompletionState(userId, 1, true, "current");
 
   const updatedDietRow = await getDietRowState("user_diet_plan", userId, "current", 1);
   const untouchedRecipeRow = await getDietRowState("user_recipe_plan", userId, "current", 1);
-  const updatedWorkoutRow = await getWorkoutRowState(userId, 1);
-  const updatedWorkoutPlan = await repository.getWorkoutPlan(userId);
+  const updatedWorkoutRow = await getWorkoutRowState(userId, "current", 1);
+  const updatedWorkoutPlan = await repository.getWorkoutPlan(userId, { week: "current" });
 
   assert.equal(Boolean(updatedDietRow?.breakfast_eaten), true);
   assert.equal(Boolean(updatedDietRow?.lunch_eaten), false);
@@ -700,11 +703,11 @@ test("diet and workout plan rows persist ids and completion flags", async (t) =>
   assert.equal(updatedWorkoutPlan?.days[1]?.completed, false);
 
   await repository.syncDietPlanMealEatenState(userId, "single-food", 1, "breakfast", false, "current");
-  await repository.syncWorkoutPlanDayCompletionState(userId, 1, false);
+  await repository.syncWorkoutPlanDayCompletionState(userId, 1, false, "current");
 
   const resetDietRow = await getDietRowState("user_diet_plan", userId, "current", 1);
-  const resetWorkoutRow = await getWorkoutRowState(userId, 1);
-  const resetWorkoutPlan = await repository.getWorkoutPlan(userId);
+  const resetWorkoutRow = await getWorkoutRowState(userId, "current", 1);
+  const resetWorkoutPlan = await repository.getWorkoutPlan(userId, { week: "current" });
 
   assert.equal(Boolean(resetDietRow?.breakfast_eaten), false);
   assert.equal(Boolean(resetWorkoutRow?.complete), false);

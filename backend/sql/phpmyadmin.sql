@@ -102,6 +102,8 @@ CREATE TABLE IF NOT EXISTS user_recipe_plan (
 CREATE TABLE IF NOT EXISTS user_workout_plan_days (
   id CHAR(36) NOT NULL,
   user_id CHAR(36) NOT NULL,
+  plan_week VARCHAR(20) NOT NULL DEFAULT 'current',
+  overview JSON DEFAULT NULL,
   day_number TINYINT UNSIGNED NOT NULL,
   day_name VARCHAR(20) NOT NULL,
   focus VARCHAR(255) NOT NULL,
@@ -114,8 +116,9 @@ CREATE TABLE IF NOT EXISTS user_workout_plan_days (
   complete BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (user_id, day_number),
+  PRIMARY KEY (user_id, plan_week, day_number),
   UNIQUE KEY uk_user_workout_plan_days_id (id),
+  KEY idx_user_workout_plan_days_week (user_id, plan_week),
   CONSTRAINT fk_user_workout_plan_days_user
     FOREIGN KEY (user_id) REFERENCES users(id)
     ON DELETE CASCADE
@@ -282,7 +285,7 @@ Store array fields as JSON arrays, for example:
 - energy_unit_preference: 'kj' or 'cal'
 - user_diet_plan and user_recipe_plan now include row ids plus meal-level booleans (`breakfast_eaten`, `snack_1_eaten`, `lunch_eaten`, `dinner_eaten`, `snack_2_eaten`, `supplements_eaten`)
 - each meal JSON should include object, description, quantity, quantityUnit, ingredients[], macros, calories, kilojoules
-- user_workout_plan_days now includes row ids and a `complete` boolean tied to workout completion
+- user_workout_plan_days now stores `current` and `next` weekly workout blocks with overview JSON and a `complete` boolean tied to workout completion
 - user_progress_tracking stores one row per user per calendar day with meal/workout completion timestamps and consumed/burned totals for daily, monthly, and yearly progress summaries
 - user_tracking stores one row per user per day with consumed kJ/macros, target kJ/macros, and burned kJ totals
 - user_exercise_logs stores per-exercise performed sets, reps, weight used, and calculated volume by user and date
