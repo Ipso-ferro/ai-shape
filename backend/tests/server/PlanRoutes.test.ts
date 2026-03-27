@@ -1,4 +1,4 @@
-import test from "node:test";
+import test, { after, before, mock } from "node:test";
 import assert from "node:assert/strict";
 import { AddressInfo } from "node:net";
 import { createServer } from "../../server/server";
@@ -718,6 +718,15 @@ const sampleCompletePlan: CompletePlanResult = {
 };
 
 const sessionTokenService = new SessionTokenService();
+const fixedNow = new Date("2026-03-02T12:00:00");
+
+before(() => {
+  mock.timers.enable({ apis: ["Date"], now: fixedNow });
+});
+
+after(() => {
+  mock.timers.reset();
+});
 
 const createAuthHeaders = (
   additionalHeaders: Record<string, string> = {},
@@ -1175,7 +1184,7 @@ test("GET/PUT /progress/users/:id/water returns the water target and persists cl
   });
 });
 
-test("PUT /progress/users/:id/meals/:mealSlot blocks future tracking dates", async () => {
+test("PUT /progress/users/:id/meals/:mealSlot blocks dates outside the active day", async () => {
   await withRunningServer(async (baseUrl) => {
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
@@ -1200,7 +1209,7 @@ test("PUT /progress/users/:id/meals/:mealSlot blocks future tracking dates", asy
 
     assert.equal(response.status, 400);
     const payload = await response.json();
-    assert.equal(payload.message, "Future meals and workouts stay locked until that date is active.");
+    assert.equal(payload.message, "Meals and workouts can only be marked on today's date.");
   });
 });
 
@@ -1218,7 +1227,7 @@ test("PUT /progress/users/:id/meals/:mealSlot with completed=false removes track
       {
         ...requestOptions,
         body: JSON.stringify({
-          date: "2026-03-03",
+          date: "2026-03-02",
           completed: true,
         }),
       },
@@ -1230,7 +1239,7 @@ test("PUT /progress/users/:id/meals/:mealSlot with completed=false removes track
       {
         ...requestOptions,
         body: JSON.stringify({
-          date: "2026-03-03",
+          date: "2026-03-02",
           completed: false,
         }),
       },
@@ -1242,7 +1251,7 @@ test("PUT /progress/users/:id/meals/:mealSlot with completed=false removes track
     assert.equal(payload.totals.caloriesConsumed, 0);
     assert.equal(payload.totals.kilojoulesConsumed, 0);
     assert.equal(payload.totals.mealsCompleted, 0);
-    assert.equal(repositoryUser.getDietPlanMealEatenState("recipes", "current", 2, "breakfast"), false);
+    assert.equal(repositoryUser.getDietPlanMealEatenState("recipes", "current", 1, "breakfast"), false);
   });
 });
 
@@ -1295,7 +1304,7 @@ test("PUT /progress/users/:id/meals/:mealSlot accumulates more than one meal on 
         method: "PUT",
         headers: requestHeaders,
         body: JSON.stringify({
-          date: "2026-03-04",
+          date: "2026-03-02",
           completed: true,
         }),
       },
@@ -1308,7 +1317,7 @@ test("PUT /progress/users/:id/meals/:mealSlot accumulates more than one meal on 
         method: "PUT",
         headers: requestHeaders,
         body: JSON.stringify({
-          date: "2026-03-04",
+          date: "2026-03-02",
           completed: true,
         }),
       },

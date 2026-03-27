@@ -137,6 +137,12 @@ const assertNotFutureDate = (date: string): void => {
   }
 };
 
+const assertActiveTrackingDate = (date: string): void => {
+  if (date !== getLocalDateKey()) {
+    throw new ValidationError("Meals and workouts can only be marked on today's date.");
+  }
+};
+
 const getPlanDayNumber = (date: string): number => {
   const [yearText, monthText, dayText] = date.split("-");
   const value = new Date(Date.UTC(Number(yearText), Number(monthText) - 1, Number(dayText)));
@@ -596,7 +602,7 @@ export class UserProgressTrackingService {
 
   async trackMeal(command: TrackMealProgressCommand): Promise<UserProgressDay> {
     const date = normaliseDate(command.date);
-    assertNotFutureDate(date);
+    assertActiveTrackingDate(date);
     const user = await this.getUser(command.userId);
     const selectedDietType = command.dietType ?? (
       user.kindOfDiet === "single-food" ? "single-food" : "recipes"
@@ -654,7 +660,7 @@ export class UserProgressTrackingService {
 
   async trackWorkout(command: TrackWorkoutProgressCommand): Promise<UserProgressDay> {
     const date = normaliseDate(command.date);
-    assertNotFutureDate(date);
+    assertActiveTrackingDate(date);
     const user = await this.getUser(command.userId);
     const planWeek = resolvePlanWeekForDate(date);
     const workoutPlan = await this.repositoryUser.getWorkoutPlan(command.userId, {

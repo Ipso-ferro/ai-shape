@@ -1160,6 +1160,10 @@ label > span {
   flex-wrap: wrap;
 }
 
+.diet-week-actions {
+  margin-top: 1rem;
+}
+
 .primary-button,
 .secondary-button,
 .ghost-button,

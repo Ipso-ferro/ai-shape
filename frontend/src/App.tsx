@@ -484,13 +484,6 @@ const progressPercent = (value: number, target: number): number => {
   return Math.max(0, Math.min(100, (value / target) * 100));
 };
 
-const dayDateMap = (weekDays: WeekDay[]): Record<number, string> => (
-  weekDays.reduce<Record<number, string>>((accumulator, item) => {
-    accumulator[item.dayNumber] = item.date;
-    return accumulator;
-  }, {})
-);
-
 const firstOrEmpty = (list: string[]): string => list[0] ?? "No notes yet";
 
 const resolveCurrentDietType = (user: UserProfile | null): DietType => (
@@ -740,7 +733,9 @@ function App() {
   const [exerciseLogsByDate, setExerciseLogsByDate] = useState<Record<string, ExerciseLogDraft[]>>({});
   const [selectedDietDay, setSelectedDietDay] = useState(defaultSelectedDay);
   const [selectedDietType, setSelectedDietType] = useState<DietType>("single-food");
+  const [selectedDietWeek, setSelectedDietWeek] = useState<PlanWeek>("current");
   const [selectedWorkoutDay, setSelectedWorkoutDay] = useState(defaultSelectedDay);
+  const [selectedWorkoutWeek, setSelectedWorkoutWeek] = useState<PlanWeek>("current");
   const [selectedShoppingDietType, setSelectedShoppingDietType] = useState<DietType>("single-food");
   const [selectedShoppingWeek, setSelectedShoppingWeek] = useState<PlanWeek>("current");
   const [profileDraft, setProfileDraft] = useState<ProfileDraft>(emptyDraft);
@@ -770,19 +765,23 @@ function App() {
   const activeSessionUserIdRef = useRef<string | null>(null);
 
   const weekDays = getCurrentWeek();
+  const nextWeekReferenceDate = new Date();
+  nextWeekReferenceDate.setDate(nextWeekReferenceDate.getDate() + 7);
+  const nextWeekDays = getCurrentWeek(nextWeekReferenceDate);
+  const trackedDietWeekDays = [...weekDays, ...nextWeekDays];
   const today = todayKey();
-  const weekByNumber = dayDateMap(weekDays);
   const weekRangeStart = weekDays[0]?.date ?? today;
-  const weekRangeEnd = weekDays[weekDays.length - 1]?.date ?? today;
+  const weekRangeEnd = nextWeekDays[nextWeekDays.length - 1]?.date ?? weekDays[weekDays.length - 1]?.date ?? today;
   const exerciseHistoryStart = shiftDateKey(today, -27);
   const profileComplete = user ? isProfileReady(user) : false;
   const activeDietType = resolveCurrentDietType(user);
   const activePlanWeek = getPlanWeekForDate();
   const futurePlanWeek = getFuturePlanWeekForDate();
-  const visibleShoppingLists = {
-    current: shoppingLists[activePlanWeek],
-    next: shoppingLists[futurePlanWeek],
-  };
+  const visibleDietStorageWeek = selectedDietWeek;
+  const visibleDietWeekDays = selectedDietWeek === "current" ? weekDays : nextWeekDays;
+  const visibleWorkoutStorageWeek = selectedWorkoutWeek;
+  const visibleWorkoutWeekDays = selectedWorkoutWeek === "current" ? weekDays : nextWeekDays;
+  const visibleShoppingLists = shoppingLists;
   const activeCurrentShoppingList = shoppingLists[activePlanWeek][activeDietType];
   const isRefreshingWorkout = workoutGenerationStatus !== null;
   const isRegeneratingPlan = dietGenerationStatus?.source === "redo-plan"
@@ -975,7 +974,11 @@ function App() {
     setWeekTracking({});
     setWeekWater({});
     setExerciseLogsByDate({});
+    setSelectedDietDay(defaultSelectedDay);
     setSelectedDietType("single-food");
+    setSelectedDietWeek("current");
+    setSelectedWorkoutDay(defaultSelectedDay);
+    setSelectedWorkoutWeek("current");
     setSelectedShoppingDietType("single-food");
     setSelectedShoppingWeek("current");
     setProfileDraft(emptyDraft);
@@ -1044,7 +1047,7 @@ function App() {
       const activeDietType = resolveCurrentDietType(freshUser);
 
       const progressDays = await Promise.all(
-        weekDays.map(async (weekDay) => {
+        trackedDietWeekDays.map(async (weekDay) => {
           const progressDay = await api.getProgressDay(userId, weekDay.date);
           return [weekDay.date, progressDay] as const;
         }),
@@ -1115,7 +1118,7 @@ function App() {
       api.getProgressSummary(userId, "month", today),
       api.getProgressSummary(userId, "year", today),
       Promise.all(
-        weekDays.map(async (weekDay) => [weekDay.date, await api.getProgressDay(userId, weekDay.date)] as const),
+        trackedDietWeekDays.map(async (weekDay) => [weekDay.date, await api.getProgressDay(userId, weekDay.date)] as const),
       ),
       api.getTrackingEntries(userId, weekRangeStart, weekRangeEnd),
       api.getWaterEntries(userId, weekRangeStart, weekRangeEnd),
@@ -1382,7 +1385,7 @@ function App() {
     }
   }
 
-  async function generateMissingDietMode(dietType: DietType) {
+  async function generateMissingDietMode(dietType: DietType, week: PlanWeek = activePlanWeek) {
     if (!sessionUserId) {
       return;
     }
@@ -1399,15 +1402,15 @@ function App() {
 
     try {
       const generatedDietPlan = await api.generateDietPlan(requestUserId, dietType, {
-        week: activePlanWeek,
+        week,
         activateDietType: false,
       });
 
       if (isCurrentSession(requestUserId)) {
         setDietPlans((current) => ({
           ...current,
-          [activePlanWeek]: {
-            ...current[activePlanWeek],
+          [week]: {
+            ...current[week],
             [dietType]: withDietMealStateDefaults(generatedDietPlan),
           },
         }));
@@ -1468,15 +1471,16 @@ function App() {
     mealSlot: MealSlot,
     completed: boolean,
     dietType: DietType,
+    mappedDate: string,
+    week: PlanWeek,
   ) {
     if (!sessionUserId) {
       return;
     }
 
-    const mappedDate = weekByNumber[day.day];
     const mealKey = `${mappedDate}:${mealSlot}`;
     const previousDietPlans = dietPlans;
-    setDietPlans((current) => patchDietPlansMealState(current, activePlanWeek, dietType, day.day, mealSlot, completed));
+    setDietPlans((current) => patchDietPlansMealState(current, week, dietType, day.day, mealSlot, completed));
     setPendingMealKey(mealKey);
 
     mealActionQueueRef.current = mealActionQueueRef.current
@@ -1484,7 +1488,7 @@ function App() {
       .then(async () => {
         const result = await api.toggleMeal(sessionUserId, mealSlot, mappedDate, completed, {
           dietType,
-          week: activePlanWeek,
+          week,
         });
         setWeekProgress((current) => ({ ...current, [mappedDate]: result }));
 
@@ -1512,15 +1516,14 @@ function App() {
     }));
   }
 
-  async function toggleWorkout(day: WorkoutPlanDay, completed: boolean) {
+  async function toggleWorkout(day: WorkoutPlanDay, completed: boolean, mappedDate: string, week: PlanWeek) {
     if (!sessionUserId) {
       return;
     }
 
-    const mappedDate = weekByNumber[day.day];
     const exerciseLogs = mergeExerciseLogDrafts(day, mappedDate, exerciseLogsByDate[mappedDate]);
     const previousWorkoutPlans = workoutPlans;
-    setWorkoutPlans((current) => patchWorkoutPlanCompletionState(current, activePlanWeek, day.day, completed));
+    setWorkoutPlans((current) => patchWorkoutPlanCompletionState(current, week, day.day, completed));
     setPendingWorkoutDay(day.day);
 
     try {
@@ -1530,7 +1533,7 @@ function App() {
         completed,
         completed ? mapExerciseDraftsToInputs(exerciseLogs) : [],
         {
-          week: activePlanWeek,
+          week,
         },
       );
       setWeekProgress((current) => ({ ...current, [mappedDate]: result }));
@@ -1600,13 +1603,13 @@ function App() {
         checked,
         {
           dietType: selectedShoppingDietType,
-          week: selectedShoppingWeek === "current" ? activePlanWeek : futurePlanWeek,
+          week: selectedShoppingWeek,
         },
       );
       setShoppingLists((current) => ({
         ...current,
-        [selectedShoppingWeek === "current" ? activePlanWeek : futurePlanWeek]: {
-          ...current[selectedShoppingWeek === "current" ? activePlanWeek : futurePlanWeek],
+        [selectedShoppingWeek]: {
+          ...current[selectedShoppingWeek],
           [selectedShoppingDietType]: result,
         },
       }));
@@ -1844,19 +1847,23 @@ function App() {
 
             {activeView === "diet" ? (
               <DietView
-                plans={dietPlans[activePlanWeek]}
+                plans={dietPlans[visibleDietStorageWeek]}
                 selectedDay={selectedDietDay}
                 onSelectDay={setSelectedDietDay}
                 selectedDietType={selectedDietType}
                 onSelectDietType={setSelectedDietType}
-                onToggleMeal={toggleMeal}
+                selectedWeek={selectedDietWeek}
+                onSelectWeek={setSelectedDietWeek}
+                onToggleMeal={(day, mealSlot, completed, dietType, mappedDate) => (
+                  toggleMeal(day, mealSlot, completed, dietType, mappedDate, visibleDietStorageWeek)
+                )}
                 onOpenRecipe={(entry) => setRecipePreview({
                   title: entry.object,
                   description: entry.description,
                   instructions: entry.instructions ?? [],
                   preparationTimeMinutes: entry.preparationTimeMinutes,
                 })}
-                weekDays={weekDays}
+                weekDays={visibleDietWeekDays}
                 weekProgress={weekProgress}
                 weekWater={weekWater}
                 pendingMealKey={pendingMealKey}
@@ -1864,23 +1871,27 @@ function App() {
                 energyUnitPreference={user.energyUnitPreference}
                 mealTargetCount={user.numberOfMeals}
                 hasConfiguredSupplements={user.supplementation.length > 0}
-                onGenerateMissingDietType={generateMissingDietMode}
+                onGenerateMissingDietType={(dietType) => generateMissingDietMode(dietType, visibleDietStorageWeek)}
                 generationStatus={dietGenerationStatus}
                 onSaveWater={saveWater}
-                onRegenerateDietMode={regenerateWeek}
+                onRegenerateDietMode={(dietType) => regenerateWeek(dietType, visibleDietStorageWeek)}
               />
             ) : null}
 
             {activeView === "workout" ? (
               <WorkoutView
-                plan={workoutPlans[activePlanWeek]}
+                plan={workoutPlans[visibleWorkoutStorageWeek]}
                 selectedDay={selectedWorkoutDay}
                 onSelectDay={setSelectedWorkoutDay}
-                onToggleWorkout={toggleWorkout}
+                selectedWeek={selectedWorkoutWeek}
+                onSelectWeek={setSelectedWorkoutWeek}
+                onToggleWorkout={(day, completed, mappedDate) => (
+                  toggleWorkout(day, completed, mappedDate, visibleWorkoutStorageWeek)
+                )}
                 exerciseLogsByDate={exerciseLogsByDate}
                 onUpdateExerciseLogs={updateExerciseLogs}
-                onRegenerateWorkout={() => regenerateWorkoutPlan()}
-                weekDays={weekDays}
+                onRegenerateWorkout={() => regenerateWorkoutPlan({ week: visibleWorkoutStorageWeek })}
+                weekDays={visibleWorkoutWeekDays}
                 weekProgress={weekProgress}
                 pendingWorkoutDay={pendingWorkoutDay}
                 energyUnitPreference={user.energyUnitPreference}
@@ -2797,11 +2808,14 @@ function DietView(props: {
   onSelectDay: (day: number) => void;
   selectedDietType: DietType;
   onSelectDietType: (dietType: DietType) => void;
+  selectedWeek: PlanWeek;
+  onSelectWeek: (week: PlanWeek) => void;
   onToggleMeal: (
     day: DietPlanDay,
     mealSlot: MealSlot,
     completed: boolean,
     dietType: DietType,
+    mappedDate: string,
   ) => Promise<void>;
   onOpenRecipe: (entry: DietPlanEntry) => void;
   weekDays: WeekDay[];
@@ -2834,6 +2848,22 @@ function DietView(props: {
               {props.generationStatus ? (
                 <SectionGenerationCard kind="diet" status={props.generationStatus} />
               ) : null}
+              <div className="inline-actions">
+                <button
+                  type="button"
+                  className={props.selectedWeek === "current" ? "toggle active" : "toggle"}
+                  onClick={() => props.onSelectWeek("current")}
+                >
+                  This week
+                </button>
+                <button
+                  type="button"
+                  className={props.selectedWeek === "next" ? "toggle active" : "toggle"}
+                  onClick={() => props.onSelectWeek("next")}
+                >
+                  Next week
+                </button>
+              </div>
               <div className="inline-actions">
                 {dietTypeOptions.map((item) => (
                   <button
@@ -2890,7 +2920,7 @@ function DietView(props: {
   const activeProgress = props.weekProgress[activeDate];
   const activeWater = props.weekWater[activeDate];
   const visibleMeals = getRenderableMealConfig(activeDay);
-  const isFutureDay = activeDate > todayKey();
+  const isTrackableDay = activeDate === todayKey();
   const targetGlasses = activeWater?.targetGlasses ?? 0;
   const completedGlasses = activeWater?.glassesCompleted ?? 0;
   const completedLiters = activeWater?.completedLiters ?? 0;
@@ -2899,11 +2929,11 @@ function DietView(props: {
   return (
     <div className="stack-page">
       <section className="panel">
-        <div className="panel-header split-end">
-          <div>
-            <span className="eyebrow">7-day diet</span>
-            <h3>
-              {formatEnergyValue(Math.round(plan.summary.dailyCalories * kilojoulesPerCalorie), props.energyUnitPreference)} target · {" "}
+          <div className="panel-header split-end">
+            <div>
+              <span className="eyebrow">7-day diet</span>
+              <h3>
+                {formatEnergyValue(Math.round(plan.summary.dailyCalories * kilojoulesPerCalorie), props.energyUnitPreference)} target · {" "}
               {formatEnergyValue(activeProgress?.totals.kilojoulesConsumed ?? 0, props.energyUnitPreference)} consumed
             </h3>
             <p className="muted-line">
@@ -2962,6 +2992,23 @@ function DietView(props: {
             </button>
           ))}
         </div>
+
+        <div className="inline-actions diet-week-actions">
+          <button
+            type="button"
+            className={props.selectedWeek === "current" ? "toggle active" : "toggle"}
+            onClick={() => props.onSelectWeek("current")}
+          >
+            This week
+          </button>
+          <button
+            type="button"
+            className={props.selectedWeek === "next" ? "toggle active" : "toggle"}
+            onClick={() => props.onSelectWeek("next")}
+          >
+            Next week
+          </button>
+        </div>
       </section>
 
       <section className="meals-grid">
@@ -2989,12 +3036,12 @@ function DietView(props: {
                 <button
                   type="button"
                   className={done ? "check-button active" : "check-button"}
-                  onClick={() => props.onToggleMeal(activeDay, meal.slot, !done, props.selectedDietType)}
-                  disabled={props.pendingMealKey === currentMealKey || isFutureDay}
+                  onClick={() => props.onToggleMeal(activeDay, meal.slot, !done, props.selectedDietType, activeDate)}
+                  disabled={props.pendingMealKey === currentMealKey || !isTrackableDay}
                 >
                   {props.pendingMealKey === currentMealKey
                     ? "Saving..."
-                    : isFutureDay
+                    : !isTrackableDay
                       ? "Locked"
                       : done ? "Eaten" : "Mark eaten"}
                 </button>
@@ -3049,7 +3096,7 @@ function DietView(props: {
           </div>
           <div className="water-panel-copy">
             <span>Minimal requirement for this day</span>
-            {isFutureDay ? <span>Locked until this day is active</span> : null}
+            {!isTrackableDay ? <span>Locked until this day is active</span> : null}
           </div>
         </div>
 
@@ -3064,7 +3111,7 @@ function DietView(props: {
                 type="button"
                 className={filled ? "water-glass-button filled" : "water-glass-button"}
                 onClick={() => props.onSaveWater(activeDate, nextCompleted)}
-                disabled={props.pendingWaterDate === activeDate || isFutureDay}
+                disabled={props.pendingWaterDate === activeDate || activeDate > todayKey()}
                 aria-label={`Glass ${index + 1} of ${targetGlasses}`}
               >
                 <img
@@ -3086,7 +3133,9 @@ function WorkoutView(props: {
   plan: WorkoutPlan | null;
   selectedDay: number;
   onSelectDay: (day: number) => void;
-  onToggleWorkout: (day: WorkoutPlanDay, completed: boolean) => Promise<void>;
+  selectedWeek: PlanWeek;
+  onSelectWeek: (week: PlanWeek) => void;
+  onToggleWorkout: (day: WorkoutPlanDay, completed: boolean, mappedDate: string) => Promise<void>;
   exerciseLogsByDate: Record<string, ExerciseLogDraft[]>;
   onUpdateExerciseLogs: (date: string, logs: ExerciseLogDraft[]) => void;
   onRegenerateWorkout: () => void;
@@ -3096,6 +3145,25 @@ function WorkoutView(props: {
   energyUnitPreference: EnergyUnit;
   generationStatus: SectionGenerationStatus | null;
 }) {
+  const weekSwitchButtons = (
+    <div className="inline-actions diet-week-actions">
+      <button
+        type="button"
+        className={props.selectedWeek === "current" ? "toggle active" : "toggle"}
+        onClick={() => props.onSelectWeek("current")}
+      >
+        This week
+      </button>
+      <button
+        type="button"
+        className={props.selectedWeek === "next" ? "toggle active" : "toggle"}
+        onClick={() => props.onSelectWeek("next")}
+      >
+        Next week
+      </button>
+    </div>
+  );
+
   if (!props.plan) {
     return (
       <EmptyState
@@ -3105,6 +3173,7 @@ function WorkoutView(props: {
         onAction={props.onRegenerateWorkout}
         actionDisabled={props.generationStatus !== null}
       >
+        {weekSwitchButtons}
         {props.generationStatus ? (
           <SectionGenerationCard kind="workout" status={props.generationStatus} />
         ) : null}
@@ -3114,7 +3183,7 @@ function WorkoutView(props: {
 
   const activeDay = props.plan.days.find((day) => day.day === props.selectedDay) ?? props.plan.days[0];
   const activeDate = props.weekDays.find((item) => item.dayNumber === activeDay.day)?.date ?? todayKey();
-  const isFutureDay = activeDate > todayKey();
+  const isTrackableDay = activeDate === todayKey();
   const exerciseLogs = mergeExerciseLogDrafts(
     activeDay,
     activeDate,
@@ -3170,6 +3239,7 @@ function WorkoutView(props: {
             </button>
           ))}
         </div>
+        {weekSwitchButtons}
       </section>
 
       <section className="panel">
@@ -3185,15 +3255,15 @@ function WorkoutView(props: {
               )} burn
             </p>
           </div>
-          <button
-            type="button"
-            className={workoutCompleted ? "check-button active" : "check-button"}
-            onClick={() => props.onToggleWorkout(activeDay, !workoutCompleted)}
-            disabled={props.pendingWorkoutDay === activeDay.day || isFutureDay}
-          >
+            <button
+              type="button"
+              className={workoutCompleted ? "check-button active" : "check-button"}
+              onClick={() => props.onToggleWorkout(activeDay, !workoutCompleted, activeDate)}
+              disabled={props.pendingWorkoutDay === activeDay.day || !isTrackableDay}
+            >
             {props.pendingWorkoutDay === activeDay.day
               ? "Saving..."
-              : isFutureDay
+              : !isTrackableDay
                 ? "Locked"
                 : workoutCompleted ? "Completed" : "Mark complete"}
           </button>
@@ -3227,7 +3297,7 @@ function WorkoutView(props: {
                 volume: 0,
               };
               const inputsDisabled = workoutCompleted
-                || isFutureDay
+                || !isTrackableDay
                 || props.pendingWorkoutDay === activeDay.day;
 
               const updateExerciseLog = (
@@ -3314,7 +3384,7 @@ function WorkoutView(props: {
                   </div>
                   <div className="macro-line">
                     <span>Volume {formatNumber(exerciseLog.volume)}</span>
-                    <span>{isFutureDay ? "Available on the active date" : workoutCompleted ? "Workout saved" : "Saved when completed"}</span>
+                    <span>{!isTrackableDay ? "Available only on today's date" : workoutCompleted ? "Workout saved" : "Saved when completed"}</span>
                   </div>
                 </article>
               );
