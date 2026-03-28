@@ -145,6 +145,8 @@ const energyHistoryRangeOptions: Array<{
   { value: "half-year", label: "6M", days: 180 },
 ];
 
+const forecastLookbackMaxDays = 28;
+
 const toCalories = (kilojoules: number): number => Math.round(kilojoules / kilojoulesPerCalorie);
 
 const getEnergyUnitLabel = (energyUnit: EnergyUnit): string => (
@@ -210,6 +212,57 @@ const formatHistoryAxisLabel = (date: string, range: EnergyHistoryRange): string
   }
 
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(value);
+};
+
+const buildForecastOffsets = (range: EnergyHistoryRange): number[] => {
+  switch (range) {
+    case "week":
+      return [0, 1, 2, 3, 4, 5, 6, 7];
+    case "month":
+      return [0, 7, 14, 21, 30];
+    case "quarter":
+      return [0, 30, 60, 90];
+    case "half-year":
+      return [0, 30, 60, 90, 120, 150, 180];
+    default:
+      return [0, 30];
+  }
+};
+
+const projectWeightTowardTarget = (
+  currentWeight: number,
+  targetWeight: number,
+  averageDailyDeltaKjs: number,
+  daysAhead: number,
+): number => {
+  const projectedWeight = currentWeight + ((averageDailyDeltaKjs * daysAhead) / (7700 * kilojoulesPerCalorie));
+  const movingTowardTarget = (targetWeight - currentWeight) * (projectedWeight - currentWeight) > 0;
+
+  if (!movingTowardTarget) {
+    return Math.round(projectedWeight * 10) / 10;
+  }
+
+  if (currentWeight > targetWeight) {
+    return Math.round(Math.max(targetWeight, projectedWeight) * 10) / 10;
+  }
+
+  if (currentWeight < targetWeight) {
+    return Math.round(Math.min(targetWeight, projectedWeight) * 10) / 10;
+  }
+
+  return Math.round(projectedWeight * 10) / 10;
+};
+
+const describeTargetGap = (projectedWeight: number, targetWeight: number): string => {
+  const gap = Math.round(Math.abs(projectedWeight - targetWeight) * 10) / 10;
+
+  if (gap < 0.1) {
+    return "At target";
+  }
+
+  return projectedWeight > targetWeight
+    ? `${gap.toFixed(1)} kg above target`
+    : `${gap.toFixed(1)} kg below target`;
 };
 
 const entryKilojoules = (entry: DietPlanEntry): number => (
@@ -1913,7 +1966,7 @@ function App() {
                 onGenerateMissingDietType={(dietType) => generateMissingDietMode(dietType, visibleDietStorageWeek)}
                 generationStatus={dietGenerationStatus}
                 onSaveWater={saveWater}
-                onRegenerateDietMode={(dietType) => regenerateWeek(dietType, visibleDietStorageWeek)}
+                onRegenerateDietMode={(dietType, week) => regenerateWeek(dietType, week)}
               />
             ) : null}
 
@@ -2085,6 +2138,7 @@ function DailyEnergyChart(props: {
   energyUnitPreference: EnergyUnit;
 }) {
   const [selectedRange, setSelectedRange] = useState<EnergyHistoryRange>("week");
+  const forecastStartDate = todayKey();
   const chartWidth = 720;
   const chartHeight = 280;
   const paddingX = 42;
@@ -2092,13 +2146,13 @@ function DailyEnergyChart(props: {
   const paddingBottom = 44;
   const usableHeight = chartHeight - paddingTop - paddingBottom;
   const usableWidth = chartWidth - (paddingX * 2);
-  const bodyMassKilojouleFactor = 7700 * kilojoulesPerCalorie;
   const energyUnitLabel = props.energyUnitPreference === "cal" ? "kcal" : "kJ";
   const rangeConfig = energyHistoryRangeOptions.find((option) => option.value === selectedRange)
     ?? energyHistoryRangeOptions[0];
-  const rangeDates = buildDateKeySeries(todayKey(), rangeConfig.days);
+  const lookbackDays = Math.min(rangeConfig.days, forecastLookbackMaxDays);
+  const lookbackDates = buildDateKeySeries(forecastStartDate, lookbackDays);
   const currentWeekDaysByDate = new Map(props.weekDays.map((weekDay) => [weekDay.date, weekDay]));
-  const series = rangeDates.map((date) => {
+  const observedDays = lookbackDates.map((date) => {
     const tracking = props.weekTracking[date];
     const weekDay = currentWeekDaysByDate.get(date);
     const dietDay = weekDay
@@ -2107,19 +2161,35 @@ function DailyEnergyChart(props: {
     const plannedTargetKjs = resolveDietDayTargets(dietDay).kjsTarget;
     const targetKjs = tracking?.kjsTarget
       ?? (plannedTargetKjs > 0 ? plannedTargetKjs : props.user.kilojoulesTarget);
-    const consumedKjs = tracking?.kjsConsumed ?? targetKjs;
+    const consumedKjs = tracking?.kjsConsumed;
 
     return {
       date,
-      label: formatHistoryAxisLabel(date, selectedRange),
       consumedKjs,
       targetKjs,
     };
   });
-  let cumulativeDelta = 0;
-  const projectedWeights = series.map((day) => {
-    cumulativeDelta += day.consumedKjs - day.targetKjs;
-    return Math.round((props.user.weight + (cumulativeDelta / bodyMassKilojouleFactor)) * 10) / 10;
+  const trackedObservedDays = observedDays.filter((day) => typeof day.consumedKjs === "number");
+  const trendSource = trackedObservedDays.length > 0 ? trackedObservedDays : observedDays;
+  const averageConsumedKjs = trendSource.reduce((sum, day) => sum + (day.consumedKjs ?? day.targetKjs), 0) / Math.max(trendSource.length, 1);
+  const averageTargetKjs = trendSource.reduce((sum, day) => sum + day.targetKjs, 0) / Math.max(trendSource.length, 1);
+  const averageDailyDeltaKjs = averageConsumedKjs - averageTargetKjs;
+  const forecastOffsets = buildForecastOffsets(selectedRange);
+  const series = forecastOffsets.map((daysAhead) => {
+    const date = shiftDateKey(forecastStartDate, daysAhead);
+
+    return {
+      date,
+      label: formatHistoryAxisLabel(date, selectedRange),
+      consumedKjs: averageConsumedKjs,
+      targetKjs: averageTargetKjs,
+      projectedWeight: projectWeightTowardTarget(
+        props.user.weight,
+        props.user.targetWeight,
+        averageDailyDeltaKjs,
+        daysAhead,
+      ),
+    };
   });
   const chartSeries = series.map((day) => ({
     ...day,
@@ -2130,6 +2200,7 @@ function DailyEnergyChart(props: {
       ? toCalories(day.targetKjs)
       : day.targetKjs,
   }));
+  const projectedWeights = series.map((day) => day.projectedWeight);
   const maxEnergy = Math.max(1, ...chartSeries.flatMap((day) => [day.consumed, day.target]));
   const weightMin = Math.min(props.user.weight, ...projectedWeights);
   const weightMax = Math.max(props.user.weight, ...projectedWeights);
@@ -2157,9 +2228,24 @@ function DailyEnergyChart(props: {
     const x = paddingX + ((usableWidth / Math.max(projectedWeights.length - 1, 1)) * index);
     return `${x},${resolveWeightY(value)}`;
   }).join(" ");
-  const averageConsumed = series.reduce((sum, day) => sum + day.consumedKjs, 0) / Math.max(series.length, 1);
-  const averageTarget = series.reduce((sum, day) => sum + day.targetKjs, 0) / Math.max(series.length, 1);
-  const projectedShift = projectedWeights[projectedWeights.length - 1] - projectedWeights[0];
+  const forecastWeightCards = [
+    { title: "1 month", days: 30 },
+    { title: "3 months", days: 90 },
+    { title: "6 months", days: 180 },
+  ].map((item) => {
+    const projectedWeight = projectWeightTowardTarget(
+      props.user.weight,
+      props.user.targetWeight,
+      averageDailyDeltaKjs,
+      item.days,
+    );
+
+    return {
+      ...item,
+      projectedWeight,
+      detail: describeTargetGap(projectedWeight, props.user.targetWeight),
+    };
+  });
 
   return (
     <>
@@ -2167,7 +2253,9 @@ function DailyEnergyChart(props: {
         <div>
           <span className="eyebrow">Daily adherence</span>
           <h3>{props.energyUnitPreference === "cal" ? "Calories vs target" : "Kilojoules vs target"}</h3>
-          <p className="muted-line">Consumed energy, planned target, and projected body-mass drift across the selected view.</p>
+          <p className="muted-line">
+            Future forecast from the last {trackedObservedDays.length > 0 ? trackedObservedDays.length : lookbackDays} tracked days. It projects body weight toward {props.user.targetWeight} kg if this intake trend continues.
+          </p>
         </div>
         <div className="panel-header-aside chart-range-toggle" role="group" aria-label="Energy chart range">
           {energyHistoryRangeOptions.map((option) => (
@@ -2184,7 +2272,7 @@ function DailyEnergyChart(props: {
       </div>
 
       <div className="chart-legend">
-        <span className="chart-legend-item energy-consumed">Consumed</span>
+        <span className="chart-legend-item energy-consumed">Projected intake</span>
         <span className="chart-legend-item energy-target">Target</span>
         <span className="chart-legend-item" style={{ ["--legend-color" as string]: "#b55d32" }}>Projected weight</span>
       </div>
@@ -2194,7 +2282,7 @@ function DailyEnergyChart(props: {
           viewBox={`0 0 ${chartWidth} ${chartHeight}`}
           className="body-chart"
           role="img"
-          aria-label={`${props.energyUnitPreference === "cal" ? "Calories" : "Kilojoules"} versus target and projected weight`}
+          aria-label={`${props.energyUnitPreference === "cal" ? "Calories" : "Kilojoules"} forecast versus target and projected weight`}
         >
           {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
             const y = paddingTop + (usableHeight * ratio);
@@ -2251,21 +2339,14 @@ function DailyEnergyChart(props: {
       </div>
 
       <div className="stats-grid composition-stats">
-        <MetricCard
-          title="Avg consumed"
-          value={formatEnergyValue(Math.round(averageConsumed), props.energyUnitPreference)}
-          detail={`${rangeConfig.label} intake`}
-        />
-        <MetricCard
-          title="Avg target"
-          value={formatEnergyValue(Math.round(averageTarget), props.energyUnitPreference)}
-          detail={`${rangeConfig.label} target`}
-        />
-        <MetricCard
-          title="Projected shift"
-          value={`${projectedShift > 0 ? "+" : ""}${projectedShift.toFixed(1)} kg`}
-          detail={`Trend toward ${props.user.targetWeight} kg`}
-        />
+        {forecastWeightCards.map((card) => (
+          <MetricCard
+            key={card.title}
+            title={card.title}
+            value={`${card.projectedWeight.toFixed(1)} kg`}
+            detail={card.detail}
+          />
+        ))}
       </div>
     </>
   );
@@ -2902,12 +2983,42 @@ function DietView(props: {
   mealTargetCount: number;
   hasConfiguredSupplements: boolean;
   onGenerateMissingDietType: (dietType: DietType) => Promise<void>;
-  onRegenerateDietMode: (dietType: DietType) => Promise<void>;
+  onRegenerateDietMode: (dietType: DietType, week: PlanWeek) => Promise<void>;
   generationStatus: SectionGenerationStatus | null;
   onSaveWater: (date: string, glassesCompleted: number) => Promise<void>;
 }) {
   const plan = props.plans[props.selectedDietType];
   const isGeneratingDiet = props.generationStatus !== null;
+  const renderDietModeControls = () => (
+    <div className="diet-mode-actions">
+      {dietTypeOptions.map((item) => {
+        const redoLabel = item.value === "recipes" ? "Redo recipes" : "Redo single foods";
+        const weekLabel = props.selectedWeek === "next" ? "next week" : "this week";
+
+        return (
+          <div key={item.value} className="diet-mode-control-group">
+            <button
+              type="button"
+              className={item.value === props.selectedDietType ? "toggle active diet-mode-control" : "toggle diet-mode-control"}
+              onClick={() => props.onSelectDietType(item.value)}
+            >
+              {item.label}
+            </button>
+            <button
+              type="button"
+              className="secondary-button diet-mode-redo"
+              onClick={() => props.onRegenerateDietMode(item.value, props.selectedWeek)}
+              disabled={isGeneratingDiet}
+              aria-label={`${redoLabel} for ${weekLabel}`}
+              title={`${redoLabel} for ${weekLabel}`}
+            >
+              <RefreshCcw02 className="button-icon" />
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
 
   if (!plan) {
     return (
@@ -2939,36 +3050,7 @@ function DietView(props: {
                   Next week
                 </button>
               </div>
-              <div className="inline-actions">
-                {dietTypeOptions.map((item) => (
-                  <button
-                    key={item.value}
-                    type="button"
-                    className={item.value === props.selectedDietType ? "toggle active" : "toggle"}
-                    onClick={() => props.onSelectDietType(item.value)}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-              <div className="inline-actions">
-                <button
-                  type="button"
-                  className="ghost-button"
-                  onClick={() => props.onRegenerateDietMode("single-food")}
-                  disabled={isGeneratingDiet}
-                >
-                  Redo single foods
-                </button>
-                <button
-                  type="button"
-                  className="ghost-button"
-                  onClick={() => props.onRegenerateDietMode("recipes")}
-                  disabled={isGeneratingDiet}
-                >
-                  Redo recipes
-                </button>
-              </div>
+              {renderDietModeControls()}
             </div>
           </div>
         </section>
@@ -3021,37 +3103,8 @@ function DietView(props: {
             {props.generationStatus ? (
               <SectionGenerationCard kind="diet" status={props.generationStatus} />
             ) : null}
-              <div className="inline-actions">
-                {dietTypeOptions.map((item) => (
-                  <button
-                  key={item.value}
-                  type="button"
-                  className={item.value === props.selectedDietType ? "toggle active" : "toggle"}
-                  onClick={() => props.onSelectDietType(item.value)}
-                >
-                  {item.label}
-                  </button>
-                ))}
-              </div>
-              <div className="inline-actions">
-                <button
-                  type="button"
-                  className="ghost-button"
-                  onClick={() => props.onRegenerateDietMode("single-food")}
-                  disabled={isGeneratingDiet}
-                >
-                  Redo single foods
-                </button>
-                <button
-                  type="button"
-                  className="ghost-button"
-                  onClick={() => props.onRegenerateDietMode("recipes")}
-                  disabled={isGeneratingDiet}
-                >
-                  Redo recipes
-                </button>
-              </div>
-            </div>
+            {renderDietModeControls()}
+          </div>
           </div>
 
         <div className="day-strip">

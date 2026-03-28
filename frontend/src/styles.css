@@ -1167,6 +1167,26 @@ label > span {
   flex-wrap: wrap;
 }
 
+.diet-mode-actions {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.diet-mode-control-group {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.diet-mode-control {
+  min-width: 10.5rem;
+}
+
+.diet-mode-redo {
+  min-width: 3rem;
+  padding-inline: 0.85rem;
+}
+
 .diet-week-actions {
   margin-top: 1rem;
 }
