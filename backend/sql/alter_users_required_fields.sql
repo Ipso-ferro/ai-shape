@@ -90,6 +90,42 @@ PREPARE stmt FROM @add_kind_of_diet;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+SET @add_target_weight = (
+  SELECT IF(
+    EXISTS(
+      SELECT 1
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = 'ai_shape'
+        AND TABLE_NAME = 'users'
+        AND COLUMN_NAME = 'target_weight'
+    ),
+    'SELECT 1',
+    'ALTER TABLE users ADD COLUMN target_weight DECIMAL(6,2) NULL AFTER weight'
+  )
+);
+
+PREPARE stmt FROM @add_target_weight;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @add_cheat_weekly_meal = (
+  SELECT IF(
+    EXISTS(
+      SELECT 1
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = 'ai_shape'
+        AND TABLE_NAME = 'users'
+        AND COLUMN_NAME = 'cheat_weekly_meal'
+    ),
+    'SELECT 1',
+    'ALTER TABLE users ADD COLUMN cheat_weekly_meal BOOLEAN NOT NULL DEFAULT FALSE AFTER kind_of_diet'
+  )
+);
+
+PREPARE stmt FROM @add_cheat_weekly_meal;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
 SET @add_diet_plan_summary = (
   SELECT IF(
     EXISTS(
@@ -261,10 +297,12 @@ ALTER TABLE users
   MODIFY COLUMN age TINYINT UNSIGNED NULL,
   MODIFY COLUMN gender VARCHAR(50) NULL,
   MODIFY COLUMN weight DECIMAL(6,2) NULL,
+  MODIFY COLUMN target_weight DECIMAL(6,2) NULL,
   MODIFY COLUMN height DECIMAL(6,2) NULL,
   MODIFY COLUMN goal VARCHAR(255) NULL,
   MODIFY COLUMN diet VARCHAR(100) NULL,
   MODIFY COLUMN kind_of_diet VARCHAR(100) NULL,
+  MODIFY COLUMN cheat_weekly_meal BOOLEAN NOT NULL DEFAULT FALSE,
   MODIFY COLUMN diet_plan_summary JSON NULL,
   MODIFY COLUMN workout_plan_overview JSON NULL,
   MODIFY COLUMN avoided_foods JSON NULL,

@@ -6,10 +6,12 @@ export interface DataUserCommand {
   age: number;
   gender: string;
   weight: number;
+  targetWeight: number;
   height: number;
   goal: string;
   diet: string;
   kindOfDiet: string;
+  cheatWeeklyMeal: boolean;
   avoidedFoods: string[];
   allergies: string[];
   levelActivity: string;

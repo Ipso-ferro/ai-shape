@@ -675,6 +675,13 @@ label > span {
   justify-items: end;
 }
 
+.chart-range-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+
 .panel-status-card {
   width: min(100%, 320px);
   display: grid;

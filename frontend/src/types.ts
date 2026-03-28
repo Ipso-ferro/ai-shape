@@ -17,10 +17,12 @@ export interface UserProfile {
   age: number;
   gender: string;
   weight: number;
+  targetWeight: number;
   height: number;
   goal: string;
   diet: string;
   kindOfDiet: string;
+  cheatWeeklyMeal: boolean;
   avoidedFoods: string[];
   allergies: string[];
   levelActivity: string;
@@ -69,10 +71,12 @@ export interface ProfileDraft {
   age: string;
   gender: string;
   weight: string;
+  targetWeight: string;
   height: string;
   goal: string;
   diet: string;
   kindOfDiet: DietType;
+  cheatWeeklyMeal: "yes" | "no";
   avoidedFoods: string;
   allergies: string;
   levelActivity: string;

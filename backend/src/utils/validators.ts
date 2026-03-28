@@ -47,6 +47,7 @@ export const validateUserData = (userData: DataUserCommand): void => {
   const requiredNumberFields: Array<[string, number]> = [
     ["age", userData.age],
     ["weight", userData.weight],
+    ["targetWeight", userData.targetWeight],
     ["height", userData.height],
     ["timeToTrain", userData.timeToTrain],
     ["numberOfMeals", userData.numberOfMeals],

@@ -47,6 +47,8 @@ export interface DietContext {
   fatsTarget: number;
   cuisineOptions: string;
   mealStructure: string;
+  progressDirection: string;
+  cheatMealGuidance: string;
 }
 
 export interface DietPlanMacros {

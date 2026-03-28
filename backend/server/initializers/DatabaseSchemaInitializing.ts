@@ -288,6 +288,25 @@ const ensureVarcharColumn = async (
   );
 };
 
+const ensureDecimalColumn = async (
+  pool: Pool,
+  tableName: string,
+  columnName: string,
+  definition: string,
+  afterColumn: string,
+): Promise<void> => {
+  if (await columnExists(pool, tableName, columnName)) {
+    return;
+  }
+
+  await pool.query(
+    `
+      ALTER TABLE ${tableName}
+      ADD COLUMN ${columnName} ${definition} AFTER ${afterColumn}
+    `,
+  );
+};
+
 const ensureBooleanColumn = async (
   pool: Pool,
   tableName: string,
@@ -383,6 +402,14 @@ const ensureEnergyUnitPreferenceColumn = async (pool: Pool): Promise<void> => {
     "VARCHAR(10) NOT NULL DEFAULT 'kj'",
     "kind_of_diet",
   );
+};
+
+const ensureTargetWeightColumn = async (pool: Pool): Promise<void> => {
+  await ensureDecimalColumn(pool, "users", "target_weight", "DECIMAL(6,2) NULL", "weight");
+};
+
+const ensureCheatWeeklyMealColumn = async (pool: Pool): Promise<void> => {
+  await ensureBooleanColumn(pool, "users", "cheat_weekly_meal", "kind_of_diet");
 };
 
 const ensureWorkoutDayMetricColumns = async (pool: Pool): Promise<void> => {
@@ -1019,6 +1046,8 @@ export const initializeDatabaseSchema = async (
 ): Promise<void> => {
   await ensureGoogleIdentityColumns(pool);
   await ensureEnergyUnitPreferenceColumn(pool);
+  await ensureTargetWeightColumn(pool);
+  await ensureCheatWeeklyMealColumn(pool);
   await ensureJsonColumn(pool, "supplementation", "favorite_foods");
   await ensureJsonColumn(pool, "diet_plan_summary", "kind_of_diet");
   await ensureJsonColumn(pool, "workout_plan_overview", "diet_plan_summary");

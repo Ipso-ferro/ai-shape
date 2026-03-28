@@ -4,6 +4,7 @@ import { DataUserCommand, DietPlan } from "../../src/types";
 import {
   applyMealCountToDietPlan,
   buildMealCountPromptGuidance,
+  calculateDietContext,
   createEmptyDietEntry,
   ensureDietPlanDayMatchesMealCount,
   executeDietPlanGeneration,
@@ -95,10 +96,12 @@ const sampleUser: DataUserCommand = {
   age: 31,
   gender: "male",
   weight: 82,
+  targetWeight: 76,
   height: 178,
   goal: "fat-loss",
   diet: "omnivore",
   kindOfDiet: "recipes",
+  cheatWeeklyMeal: false,
   energyUnitPreference: "kj",
   avoidedFoods: [],
   allergies: [],
@@ -117,6 +120,18 @@ const sampleUser: DataUserCommand = {
   favorieteCoucineRecipes: ["mediterranean"],
   isPro: false,
 };
+
+test("diet context includes target-weight progression and cheat meal guidance", () => {
+  const context = calculateDietContext({
+    ...sampleUser,
+    cheatWeeklyMeal: true,
+  }, "recipes");
+
+  assert.match(context.progressDirection, /82kg/);
+  assert.match(context.progressDirection, /76kg/);
+  assert.match(context.progressDirection, /progressive/i);
+  assert.match(context.cheatMealGuidance, /exactly one weekly cheat or flex meal/i);
+});
 
 test("single-food validation accepts entries without instructions", () => {
   const plan = buildPlan(() => buildEntry());

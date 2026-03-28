@@ -120,7 +120,7 @@ function buildRecipePrompt(
 CLIENT PROFILE:
 Name: ${userData.name}
 Age: ${userData.age} years | Gender: ${userData.gender}
-Weight: ${userData.weight}kg | Height: ${userData.height}cm
+Weight: ${userData.weight}kg | Target weight: ${userData.targetWeight}kg | Height: ${userData.height}cm
 Activity Level: ${userData.levelActivity}
 Dietary Preference: ${userData.diet}
 Goal: ${userData.goal}
@@ -142,6 +142,11 @@ DIETARY SPECIFICATIONS:
 
 PLAN TYPE:
 ${context.mealStructure}
+
+PROGRESSION RULES:
+- ${context.progressDirection}
+- ${context.cheatMealGuidance}
+- Make the 7-day recipe plan progressive with useful variation, not seven disconnected days.
 
 RECIPE RULES:
 - Every active meal slot must be a real recipe dish, not a plain food list.
@@ -239,7 +244,7 @@ function buildRecipeDayPrompt(
 CLIENT PROFILE:
 Name: ${userData.name}
 Age: ${userData.age} years | Gender: ${userData.gender}
-Weight: ${userData.weight}kg | Height: ${userData.height}cm
+Weight: ${userData.weight}kg | Target weight: ${userData.targetWeight}kg | Height: ${userData.height}cm
 Activity Level: ${userData.levelActivity}
 Dietary Preference: ${userData.diet}
 Goal: ${userData.goal}
@@ -258,6 +263,8 @@ RULES:
 - Every meal must include at least 3 ingredients.
 - Every meal must include 2 or 3 short instructions.
 - Keep descriptions concise.
+- ${context.progressDirection}
+- ${context.cheatMealGuidance}
 - ${supplementRule}
 ${buildMealCountPromptGuidance(userData.numberOfMeals)}
 

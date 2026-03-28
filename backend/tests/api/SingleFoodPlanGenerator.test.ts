@@ -6,16 +6,21 @@ import {
   buildSingleFoodPrompt,
 } from "../../src/api/SingleFoodPlanGenerator";
 
-const buildUser = (supplementation: string[]): DataUserCommand => ({
+const buildUser = (
+  supplementation: string[],
+  overrides: Partial<DataUserCommand> = {},
+): DataUserCommand => ({
   id: "single-food-user",
   name: "Single Food Tester",
   age: 34,
   gender: "female",
   weight: 68,
+  targetWeight: 63,
   height: 170,
   goal: "muscle-gain",
-  diet: "omnivore",
+  diet: "high-protein",
   kindOfDiet: "single-food",
+  cheatWeeklyMeal: false,
   energyUnitPreference: "kj",
   avoidedFoods: [],
   allergies: [],
@@ -33,6 +38,7 @@ const buildUser = (supplementation: string[]): DataUserCommand => ({
   supplementation,
   favorieteCoucineRecipes: [],
   isPro: false,
+  ...overrides,
 });
 
 const buildUserWithMealCount = (
@@ -49,6 +55,19 @@ test("single-food weekly prompt requires listed supplements", () => {
   assert.match(prompt, /Current supplementation: creatine, whey protein/);
   assert.match(prompt, /Do not leave supplements empty/i);
   assert.match(prompt, /include the user's listed supplements/i);
+});
+
+test("single-food prompts include target weight progression and cheat meal guidance", () => {
+  const prompt = buildSingleFoodPrompt(buildUser(["creatine"], {
+    goal: "fat-loss",
+    weight: 68,
+    targetWeight: 62,
+    cheatWeeklyMeal: true,
+  }), false);
+
+  assert.match(prompt, /Target weight: 62kg/);
+  assert.match(prompt, /Make the week progressive/i);
+  assert.match(prompt, /exactly one weekly cheat or flex meal/i);
 });
 
 test("single-food daily prompt requires listed supplements", () => {

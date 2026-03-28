@@ -109,7 +109,7 @@ export function buildSingleFoodPrompt(
 CLIENT PROFILE:
 Name: ${userData.name}
 Age: ${userData.age} years | Gender: ${userData.gender}
-Weight: ${userData.weight}kg | Height: ${userData.height}cm
+Weight: ${userData.weight}kg | Target weight: ${userData.targetWeight}kg | Height: ${userData.height}cm
 Activity Level: ${userData.levelActivity}
 Dietary Preference: ${userData.diet}
 Goal: ${userData.goal}
@@ -130,6 +130,11 @@ DIETARY SPECIFICATIONS:
 
 PLAN TYPE:
 ${context.mealStructure}
+
+PROGRESSION RULES:
+- ${context.progressDirection}
+- ${context.cheatMealGuidance}
+- Make the week progressive, not repetitive. Keep meal quality and portions aligned with the target weight direction.
 
 SINGLE-FOOD RULES:
 - Do not generate chef-style recipes or cooking workflows.
@@ -226,7 +231,7 @@ export function buildSingleFoodDayPrompt(
 CLIENT PROFILE:
 Name: ${userData.name}
 Age: ${userData.age} years | Gender: ${userData.gender}
-Weight: ${userData.weight}kg | Height: ${userData.height}cm
+Weight: ${userData.weight}kg | Target weight: ${userData.targetWeight}kg | Height: ${userData.height}cm
 Activity Level: ${userData.levelActivity}
 Dietary Preference: ${userData.diet}
 Goal: ${userData.goal}
@@ -245,6 +250,8 @@ RULES:
 - Do not include cooking instructions.
 - Do not include preparationTimeMinutes.
 - Keep descriptions concise.
+- ${context.progressDirection}
+- ${context.cheatMealGuidance}
 - ${buildSingleFoodDailySupplementRule(userData)}
 ${buildMealCountPromptGuidance(userData.numberOfMeals)}
 

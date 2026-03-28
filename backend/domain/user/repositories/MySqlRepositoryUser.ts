@@ -47,10 +47,12 @@ interface UserRow extends RowDataPacket {
   age: number | string | null;
   gender: string | null;
   weight: number | string | null;
+  target_weight: number | string | null;
   height: number | string | null;
   goal: string | null;
   diet: string | null;
   kind_of_diet: string | null;
+  cheat_weekly_meal: number | boolean | null;
   energy_unit_preference: EnergyUnit | string | null;
   avoided_foods: string[] | string | null;
   allergies: string[] | string | null;
@@ -208,10 +210,12 @@ const userSelect = `
     age,
     gender,
     weight,
+    target_weight,
     height,
     goal,
     diet,
     kind_of_diet,
+    cheat_weekly_meal,
     energy_unit_preference,
     avoided_foods,
     allergies,
@@ -506,10 +510,12 @@ const assertSaveDataUserCommand = (
   assertFiniteNumber(dataUserCommand.age, "age");
   assertNonEmptyString(dataUserCommand.gender, "gender");
   assertFiniteNumber(dataUserCommand.weight, "weight");
+  assertFiniteNumber(dataUserCommand.targetWeight, "targetWeight");
   assertFiniteNumber(dataUserCommand.height, "height");
   assertNonEmptyString(dataUserCommand.goal, "goal");
   assertNonEmptyString(dataUserCommand.diet, "diet");
   assertNonEmptyString(dataUserCommand.kindOfDiet, "kindOfDiet");
+  assertBoolean(dataUserCommand.cheatWeeklyMeal, "cheatWeeklyMeal");
   assertStringArray(dataUserCommand.avoidedFoods, "avoidedFoods");
   assertStringArray(dataUserCommand.allergies, "allergies");
   assertNonEmptyString(dataUserCommand.levelActivity, "levelActivity");
@@ -628,10 +634,12 @@ const mapRowToDataUserCommand = (row: UserRow): DataUserCommand => ({
   age: toNumber(row.age),
   gender: row.gender ?? "",
   weight: toNumber(row.weight),
+  targetWeight: toNumber(row.target_weight),
   height: toNumber(row.height),
   goal: row.goal ?? "",
   diet: row.diet ?? "",
   kindOfDiet: row.kind_of_diet ?? "",
+  cheatWeeklyMeal: Boolean(row.cheat_weekly_meal),
   energyUnitPreference: row.energy_unit_preference === "cal" ? "cal" : "kj",
   avoidedFoods: toStringArray(row.avoided_foods),
   allergies: toStringArray(row.allergies),
@@ -1258,10 +1266,12 @@ export class MySqlRepositoryUser implements RepositoryUser {
             age = ?,
             gender = ?,
             weight = ?,
+            target_weight = ?,
             height = ?,
             goal = ?,
             diet = ?,
             kind_of_diet = ?,
+            cheat_weekly_meal = ?,
             energy_unit_preference = ?,
             avoided_foods = ?,
             allergies = ?,
@@ -1285,10 +1295,12 @@ export class MySqlRepositoryUser implements RepositoryUser {
           dataUserCommand.age,
           dataUserCommand.gender,
           dataUserCommand.weight,
+          dataUserCommand.targetWeight,
           dataUserCommand.height,
           dataUserCommand.goal,
           dataUserCommand.diet,
           dataUserCommand.kindOfDiet,
+          dataUserCommand.cheatWeeklyMeal,
           dataUserCommand.energyUnitPreference,
           JSON.stringify(dataUserCommand.avoidedFoods),
           JSON.stringify(dataUserCommand.allergies),

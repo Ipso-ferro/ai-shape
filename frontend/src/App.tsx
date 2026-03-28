@@ -81,6 +81,7 @@ const generationStatusTtlMs = 1000 * 60 * 30;
 
 type SectionGenerationKind = "diet" | "workout";
 type SectionGenerationSource = "redo-plan" | "diet-mode" | "redo-workout" | "auto-workout";
+type EnergyHistoryRange = "week" | "month" | "quarter" | "half-year";
 type DietPlanBuffers = Record<PlanWeek, Record<DietType, DietPlan | null>>;
 type WorkoutPlanBuffers = Record<PlanWeek, WorkoutPlan | null>;
 
@@ -106,10 +107,12 @@ const emptyDraft: ProfileDraft = {
   age: "",
   gender: "female",
   weight: "",
+  targetWeight: "",
   height: "",
   goal: "fat-loss",
-  diet: "omnivore",
+  diet: "balanced",
   kindOfDiet: "single-food",
+  cheatWeeklyMeal: "no",
   avoidedFoods: "",
   allergies: "",
   levelActivity: "moderate",
@@ -130,6 +133,17 @@ const clampMealsPerDay = (value: number): number => {
 
   return Math.max(mealsPerDayMin, Math.min(mealsPerDayMax, Math.round(value)));
 };
+
+const energyHistoryRangeOptions: Array<{
+  value: EnergyHistoryRange;
+  label: string;
+  days: number;
+}> = [
+  { value: "week", label: "1W", days: 7 },
+  { value: "month", label: "1M", days: 30 },
+  { value: "quarter", label: "3M", days: 90 },
+  { value: "half-year", label: "6M", days: 180 },
+];
 
 const toCalories = (kilojoules: number): number => Math.round(kilojoules / kilojoulesPerCalorie);
 
@@ -178,6 +192,24 @@ const shiftDateKey = (date: string, offsetDays: number): string => {
   const day = String(value.getDate()).padStart(2, "0");
 
   return `${year}-${month}-${day}`;
+};
+
+const buildDateKeySeries = (endDate: string, length: number): string[] => (
+  Array.from({ length }, (_, index) => shiftDateKey(endDate, index - (length - 1)))
+);
+
+const formatHistoryAxisLabel = (date: string, range: EnergyHistoryRange): string => {
+  const value = new Date(`${date}T00:00:00`);
+
+  if (range === "week") {
+    return new Intl.DateTimeFormat("en-US", { weekday: "short" }).format(value);
+  }
+
+  if (range === "month") {
+    return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(value);
+  }
+
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(value);
 };
 
 const entryKilojoules = (entry: DietPlanEntry): number => (
@@ -414,6 +446,7 @@ const isProfileReady = (user: UserProfile): boolean => (
   user.name.trim().length > 0
   && user.age > 0
   && user.weight > 0
+  && user.targetWeight > 0
   && user.height > 0
   && user.goal.trim().length > 0
   && user.diet.trim().length > 0
@@ -434,10 +467,12 @@ const toDraft = (user: UserProfile | null): ProfileDraft => {
     age: String(user.age || ""),
     gender: user.gender || "female",
     weight: String(user.weight || ""),
+    targetWeight: String(user.targetWeight || ""),
     height: String(user.height || ""),
     goal: user.goal || "fat-loss",
-    diet: user.diet || "omnivore",
+    diet: user.diet || "balanced",
     kindOfDiet: (user.kindOfDiet === "recipes" ? "recipes" : "single-food"),
+    cheatWeeklyMeal: user.cheatWeeklyMeal ? "yes" : "no",
     avoidedFoods: user.avoidedFoods.join(", "),
     allergies: user.allergies.join(", "),
     levelActivity: user.levelActivity || "moderate",
@@ -457,10 +492,12 @@ const buildSavePayload = (draft: ProfileDraft) => ({
   age: Number(draft.age),
   gender: draft.gender,
   weight: Number(draft.weight),
+  targetWeight: Number(draft.targetWeight),
   height: Number(draft.height),
   goal: draft.goal,
   diet: draft.diet,
   kindOfDiet: draft.kindOfDiet,
+  cheatWeeklyMeal: draft.cheatWeeklyMeal === "yes",
   avoidedFoods: splitList(draft.avoidedFoods),
   allergies: splitList(draft.allergies),
   levelActivity: draft.levelActivity,
@@ -772,6 +809,8 @@ function App() {
   const today = todayKey();
   const weekRangeStart = weekDays[0]?.date ?? today;
   const weekRangeEnd = nextWeekDays[nextWeekDays.length - 1]?.date ?? weekDays[weekDays.length - 1]?.date ?? today;
+  const trackingHistoryStart = shiftDateKey(today, -179);
+  const trackingHistoryEnd = today;
   const exerciseHistoryStart = shiftDateKey(today, -27);
   const profileComplete = user ? isProfileReady(user) : false;
   const activeDietType = resolveCurrentDietType(user);
@@ -1040,7 +1079,7 @@ function App() {
         api.getProgressDay(userId, today),
         api.getProgressSummary(userId, "month", today),
         api.getProgressSummary(userId, "year", today),
-        api.getTrackingEntries(userId, weekRangeStart, weekRangeEnd),
+        api.getTrackingEntries(userId, trackingHistoryStart, trackingHistoryEnd),
         api.getWaterEntries(userId, weekRangeStart, weekRangeEnd),
         api.getExerciseLogs(userId, exerciseHistoryStart, today),
       ]);
@@ -1120,7 +1159,7 @@ function App() {
       Promise.all(
         trackedDietWeekDays.map(async (weekDay) => [weekDay.date, await api.getProgressDay(userId, weekDay.date)] as const),
       ),
-      api.getTrackingEntries(userId, weekRangeStart, weekRangeEnd),
+      api.getTrackingEntries(userId, trackingHistoryStart, trackingHistoryEnd),
       api.getWaterEntries(userId, weekRangeStart, weekRangeEnd),
       api.getExerciseLogs(userId, exerciseHistoryStart, today),
     ]);
@@ -2045,6 +2084,7 @@ function DailyEnergyChart(props: {
   dietPlan: DietPlan | null;
   energyUnitPreference: EnergyUnit;
 }) {
+  const [selectedRange, setSelectedRange] = useState<EnergyHistoryRange>("week");
   const chartWidth = 720;
   const chartHeight = 280;
   const paddingX = 42;
@@ -2054,15 +2094,26 @@ function DailyEnergyChart(props: {
   const usableWidth = chartWidth - (paddingX * 2);
   const bodyMassKilojouleFactor = 7700 * kilojoulesPerCalorie;
   const energyUnitLabel = props.energyUnitPreference === "cal" ? "kcal" : "kJ";
-  const series = props.weekDays.map((weekDay) => {
-    const tracking = props.weekTracking[weekDay.date];
-    const dietDay = props.dietPlan?.days.find((day) => day.day === weekDay.dayNumber) ?? null;
-    const targets = resolveDietDayTargets(dietDay);
+  const rangeConfig = energyHistoryRangeOptions.find((option) => option.value === selectedRange)
+    ?? energyHistoryRangeOptions[0];
+  const rangeDates = buildDateKeySeries(todayKey(), rangeConfig.days);
+  const currentWeekDaysByDate = new Map(props.weekDays.map((weekDay) => [weekDay.date, weekDay]));
+  const series = rangeDates.map((date) => {
+    const tracking = props.weekTracking[date];
+    const weekDay = currentWeekDaysByDate.get(date);
+    const dietDay = weekDay
+      ? props.dietPlan?.days.find((day) => day.day === weekDay.dayNumber) ?? null
+      : null;
+    const plannedTargetKjs = resolveDietDayTargets(dietDay).kjsTarget;
+    const targetKjs = tracking?.kjsTarget
+      ?? (plannedTargetKjs > 0 ? plannedTargetKjs : props.user.kilojoulesTarget);
+    const consumedKjs = tracking?.kjsConsumed ?? targetKjs;
 
     return {
-      ...weekDay,
-      consumedKjs: tracking?.kjsConsumed ?? 0,
-      targetKjs: tracking?.kjsTarget ?? targets.kjsTarget,
+      date,
+      label: formatHistoryAxisLabel(date, selectedRange),
+      consumedKjs,
+      targetKjs,
     };
   });
   let cumulativeDelta = 0;
@@ -2083,6 +2134,8 @@ function DailyEnergyChart(props: {
   const weightMin = Math.min(props.user.weight, ...projectedWeights);
   const weightMax = Math.max(props.user.weight, ...projectedWeights);
   const weightRange = Math.max(weightMax - weightMin, 0.6);
+  const labelStep = Math.max(1, Math.ceil(chartSeries.length / 6));
+  const showDots = chartSeries.length <= 31;
 
   const resolveEnergyY = (value: number): number => (
     paddingTop + ((maxEnergy - value) / maxEnergy) * usableHeight
@@ -2114,7 +2167,19 @@ function DailyEnergyChart(props: {
         <div>
           <span className="eyebrow">Daily adherence</span>
           <h3>{props.energyUnitPreference === "cal" ? "Calories vs target" : "Kilojoules vs target"}</h3>
-          <p className="muted-line">Consumed energy, planned target, and projected body-mass drift from this intake trend.</p>
+          <p className="muted-line">Consumed energy, planned target, and projected body-mass drift across the selected view.</p>
+        </div>
+        <div className="panel-header-aside chart-range-toggle" role="group" aria-label="Energy chart range">
+          {energyHistoryRangeOptions.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              className={`toggle ${selectedRange === option.value ? "active" : ""}`}
+              onClick={() => setSelectedRange(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -2125,7 +2190,12 @@ function DailyEnergyChart(props: {
       </div>
 
       <div className="body-chart-shell">
-        <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="body-chart" role="img" aria-label="Calories versus target and projected weight">
+        <svg
+          viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+          className="body-chart"
+          role="img"
+          aria-label={`${props.energyUnitPreference === "cal" ? "Calories" : "Kilojoules"} versus target and projected weight`}
+        >
           {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
             const y = paddingTop + (usableHeight * ratio);
             const energyStep = props.energyUnitPreference === "cal" ? 50 : 200;
@@ -2161,14 +2231,19 @@ function DailyEnergyChart(props: {
 
           {chartSeries.map((day, index) => {
             const x = paddingX + ((usableWidth / Math.max(chartSeries.length - 1, 1)) * index);
+            const shouldShowLabel = index === 0
+              || index === chartSeries.length - 1
+              || index % labelStep === 0;
 
             return (
               <g key={day.date}>
-                <circle cx={x} cy={resolveEnergyY(day.consumed)} r={4.5} style={{ fill: "#ef7f45" }} />
-                <circle cx={x} cy={resolveWeightY(projectedWeights[index])} r={4.5} style={{ fill: "#b55d32" }} />
-                <text x={x} y={chartHeight - 12} textAnchor="middle" className="body-chart-axis">
-                  {day.shortLabel}
-                </text>
+                {showDots ? <circle cx={x} cy={resolveEnergyY(day.consumed)} r={4.5} style={{ fill: "#ef7f45" }} /> : null}
+                {showDots ? <circle cx={x} cy={resolveWeightY(projectedWeights[index])} r={4.5} style={{ fill: "#b55d32" }} /> : null}
+                {shouldShowLabel ? (
+                  <text x={x} y={chartHeight - 12} textAnchor="middle" className="body-chart-axis">
+                    {day.label}
+                  </text>
+                ) : null}
               </g>
             );
           })}
@@ -2179,17 +2254,17 @@ function DailyEnergyChart(props: {
         <MetricCard
           title="Avg consumed"
           value={formatEnergyValue(Math.round(averageConsumed), props.energyUnitPreference)}
-          detail="Current week intake"
+          detail={`${rangeConfig.label} intake`}
         />
         <MetricCard
           title="Avg target"
           value={formatEnergyValue(Math.round(averageTarget), props.energyUnitPreference)}
-          detail="Planned diet target"
+          detail={`${rangeConfig.label} target`}
         />
         <MetricCard
           title="Projected shift"
           value={`${projectedShift > 0 ? "+" : ""}${projectedShift.toFixed(1)} kg`}
-          detail="Trend from current intake"
+          detail={`Trend toward ${props.user.targetWeight} kg`}
         />
       </div>
     </>
@@ -3734,6 +3809,9 @@ function ProfileEditor(props: {
           <Field label="Weight (kg)">
             <input type="number" value={draft.weight} onChange={(event) => updateField("weight", event.target.value)} placeholder="75" />
           </Field>
+          <Field label="Target weight (kg)">
+            <input type="number" value={draft.targetWeight} onChange={(event) => updateField("targetWeight", event.target.value)} placeholder="68" />
+          </Field>
           <Field label="Height (cm)">
             <input type="number" value={draft.height} onChange={(event) => updateField("height", event.target.value)} placeholder="178" />
           </Field>
@@ -3744,7 +3822,13 @@ function ProfileEditor(props: {
           </Field>
           <Field label="Diet">
             <select value={draft.diet} onChange={(event) => updateField("diet", event.target.value)}>
-              {profileOptions.diets.map((item) => <option key={item} value={item}>{titleCase(item)}</option>)}
+              {profileOptions.diets.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+            </select>
+          </Field>
+          <Field label="Cheat weekly meal">
+            <select value={draft.cheatWeeklyMeal} onChange={(event) => updateField("cheatWeeklyMeal", event.target.value as ProfileDraft["cheatWeeklyMeal"])}>
+              <option value="no">No</option>
+              <option value="yes">Yes</option>
             </select>
           </Field>
           <Field label="Diet mode">

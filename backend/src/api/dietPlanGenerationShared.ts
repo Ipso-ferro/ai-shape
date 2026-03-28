@@ -599,6 +599,15 @@ export function calculateDietContext(
   const mealStructure = dietType === "single-food"
     ? "SIMPLE MEALS FROM SINGLE FOODS - Each active meal slot must contain a full meal made from plain foods with exact quantities, short description, macros, calories, and kilojoules, but not recipe-style preparation. Inactive meal slots must stay empty."
     : `RECIPE-BASED - Each active meal slot must contain one recipe object with total quantity, quantityUnit (prefer g or ml), an ingredients array with exact per-ingredient quantities, a concise description, cuisine influence (${cuisineOptions}), clear preparation instructions, preparationTimeMinutes, macros, calories, and kilojoules. Inactive meal slots must stay empty.`;
+  const targetWeightDelta = Math.round((userData.targetWeight - userData.weight) * 10) / 10;
+  const progressDirection = targetWeightDelta < -0.2
+    ? `The client is progressing from ${userData.weight}kg toward ${userData.targetWeight}kg. Make the 7-day diet progressive for gradual fat loss or recomposition: keep protein high, improve satiety, and tighten energy density across the week without extreme restriction.`
+    : targetWeightDelta > 0.2
+      ? `The client is progressing from ${userData.weight}kg toward ${userData.targetWeight}kg. Make the 7-day diet progressive for gradual mass gain or recovery support: keep meals structured, support training output, and add energy mostly through carbs and useful fats without turning the plan into junk food.`
+      : `The client is already near the target weight at ${userData.targetWeight}kg. Keep the 7-day diet progressive through variety, consistency, and recovery support while holding intake close to the daily targets.`;
+  const cheatMealGuidance = userData.cheatWeeklyMeal
+    ? "Allow exactly one weekly cheat or flex meal inside the 7-day plan. Keep it realistic, controlled, and still close to the daily calories and macro targets."
+    : "Do not include cheat meals, flex meals, or free meals anywhere in the 7-day plan.";
 
   return {
     targetCalories: userData.caloriesTarget,
@@ -608,6 +617,8 @@ export function calculateDietContext(
     fatsTarget: userData.fatsTarget,
     cuisineOptions,
     mealStructure,
+    progressDirection,
+    cheatMealGuidance,
   };
 }
 

@@ -35,7 +35,16 @@ export const energyUnitOptions: Array<{ label: string; value: EnergyUnit }> = [
 export const profileOptions = {
   genders: ["female", "male", "non-binary"],
   goals: ["fat-loss", "maintenance", "muscle-gain", "recomposition"],
-  diets: ["omnivore", "vegetarian", "vegan", "pescatarian", "balanced"],
+  diets: [
+    { value: "low-carb", label: "Low-Carb" },
+    { value: "keto", label: "Keto" },
+    { value: "mediterranean", label: "Mediterranean" },
+    { value: "high-protein", label: "High protein" },
+    { value: "vegan", label: "Vegan" },
+    { value: "vegetarian", label: "Vegetarian" },
+    { value: "balanced", label: "Balanced" },
+    { value: "random", label: "Random" },
+  ],
   activityLevels: ["sedentary", "light", "moderate", "active", "athlete"],
   locations: ["gym", "home", "outdoor", "hybrid", "home and gym"],
 };
